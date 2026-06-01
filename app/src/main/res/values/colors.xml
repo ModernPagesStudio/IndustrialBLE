@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="industrial_blue">#FF0D47A1</color>
+    <color name="industrial_cyan">#FF00BCD4</color>
+    <color name="industrial_green">#FF00C853</color>
+    <color name="industrial_amber">#FFFFAB00</color>
+    <color name="industrial_red">#FFFF1744</color>
+    <color name="industrial_dark">#FF1A1A2E</color>
+    <color name="industrial_darker">#FF0F0F23</color>
+    <color name="industrial_surface">#FF16213E</color>
+</resources>

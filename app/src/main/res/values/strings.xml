@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Industrial BLE</string>
+    <string name="tab_dashboard">Dashboard</string>
+    <string name="tab_discovery">Discovery</string>
+    <string name="tab_stress">Stress Test</string>
+    <string name="tab_logs">Logs</string>
+</resources>
