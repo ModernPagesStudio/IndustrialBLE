@@ -496,7 +496,7 @@ class MainViewModel : ViewModel() {
             override fun onReceive(ctx: Context, intent: Intent) {
                 val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
                 val previousState = intent.getIntExtra(
-                    BluetoothAdapter.EXTRA_PREVIOUS_STATE, BluetoothAdapter.STATE_UNKNOWN
+                    BluetoothAdapter.EXTRA_PREVIOUS_STATE, BluetoothAdapter.ERROR
                 )
 
                 when (state) {
