@@ -823,7 +823,7 @@ fun FrameBuilderCard(viewModel: MainViewModel, uiState: com.industrialble.ui.App
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     value = cmdIdInput,
-                    onValueChange = { cmdIdInput = it.take(2).filter { c -> c.isHexDigit() } },
+                    onValueChange = { cmdIdInput = it.take(2).filter { c -> c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F' } },
                     label = { Text("Comando (hex)") },
                     modifier = Modifier.weight(1f),
                     singleLine = true,
@@ -831,7 +831,7 @@ fun FrameBuilderCard(viewModel: MainViewModel, uiState: com.industrialble.ui.App
                 )
                 OutlinedTextField(
                     value = payloadHexInput,
-                    onValueChange = { payloadHexInput = it.filter { c -> c.isHexDigit() || c.isWhitespace() } },
+                    onValueChange = { payloadHexInput = it.filter { c -> c.isWhitespace() || c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F' } },
                     label = { Text("Payload (hex)") },
                     modifier = Modifier.weight(2f),
                     singleLine = true

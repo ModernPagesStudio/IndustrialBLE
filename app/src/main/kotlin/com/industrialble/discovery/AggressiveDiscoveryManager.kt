@@ -34,11 +34,6 @@ class AggressiveDiscoveryManager(
     private val targetServiceUUID: ParcelUuid,
     private val verificationPSM: Int
 ) {
-    companion object {
-        private const val TAG = "AggressiveDiscovery"
-        private const val PROBE_TIMEOUT_MS = 2000L
-        private const val PROBE_INTERVAL_MS = 50L
-    }
 
     private val bluetoothLeScanner: BluetoothLeScanner? = bluetoothAdapter.bluetoothLeScanner
     private var scanCallback: ScanCallback? = null
@@ -233,6 +228,9 @@ class AggressiveDiscoveryManager(
     )
 
     companion object {
+        private const val TAG = "AggressiveDiscovery"
+        private const val PROBE_TIMEOUT_MS = 2000L
+        private const val PROBE_INTERVAL_MS = 50L
         private val probeCounter = AtomicInteger(0)
     }
 }

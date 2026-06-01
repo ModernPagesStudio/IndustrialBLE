@@ -352,7 +352,7 @@ class MainViewModel : ViewModel() {
                 clientConnections = stats.connections,
                 totalBytesSent = stats.totalBytesSent,
                 totalBytesReceived = stats.totalBytesReceived,
-                discoveredDevices = discovery?.discoveredDevices ?: emptySet(),
+                discoveredDevices = discovery?.getDiscoveredDevices() ?: emptySet(),
                 isProbing = discoveryStats?.isProbing ?: false,
                 pendingProbes = discoveryStats?.pendingProbes ?: 0,
                 injectorRunning = injectorStats?.isRunning ?: false,

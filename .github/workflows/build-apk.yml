@@ -22,17 +22,49 @@ jobs:
       - name: 🤖 Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 📦 Instalar platform 34
+      - name: 📦 Instalar plataforma 34
         run: |
-          SDKMANAGER=$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager
-          if [ ! -f "$SDKMANAGER" ]; then
-            SDKMANAGER=$ANDROID_HOME/tools/bin/sdkmanager
+          echo "🔍 Buscando sdkmanager..."
+          SDKMANAGER=""
+          for candidate in \
+            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
+            "$ANDROID_HOME/tools/bin/sdkmanager" \
+            "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager" \
+            "/usr/local/lib/android/sdk/tools/bin/sdkmanager" \
+            "sdkmanager"
+          do
+            if command -v "$candidate" &>/dev/null || [ -f "$candidate" ]; then
+              SDKMANAGER="$candidate"
+              echo "✓ Encontrado: $SDKMANAGER"
+              break
+            fi
+          done
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "❌ sdkmanager no encontrado"
+            echo "ANDROID_HOME=$ANDROID_HOME"
+            ls -la "$ANDROID_HOME/" 2>/dev/null || echo "ANDROID_HOME no existe"
+            exit 1
           fi
-          echo "Usando sdkmanager: $SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses 2>&1 | grep -v "^\(All SDK package\|\[\|\)" || true
-          "$SDKMANAGER" --install "platforms;android-34" "build-tools;34.0.0" "cmdline-tools;latest" 2>&1 | tail -5
+
+          echo "📋 Aceptando licencias..."
+          yes | "$SDKMANAGER" --licenses 2>&1 | tail -3
+
+          echo "📦 Instalando platforms;android-34..."
+          "$SDKMANAGER" --install "platforms;android-34" 2>&1 | tail -10
+
+          echo "📦 Instalando build-tools;34.0.0..."
+          "$SDKMANAGER" --install "build-tools;34.0.0" 2>&1 | tail -5
+
+          echo "📦 Verificando instalación..."
+          ls -la "$ANDROID_HOME/platforms/" 2>/dev/null || (echo "❌ platforms/ no encontrado" && exit 1)
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-          ls -la $ANDROID_HOME/platforms/ || echo "⚠️ platforms/ no encontrado"
+          echo "✅ SDK listo"
+
+      - name: 📄 Crear local.properties
+        run: |
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          echo "✓ local.properties creado"
 
       - name: 🔧 Gradle Wrapper
         run: |
@@ -40,14 +72,17 @@ jobs:
             gradle wrapper --gradle-version 8.5
             chmod +x gradlew
           fi
+          chmod +x gradlew
 
       - name: 🏗️ Compilar APK
         run: |
-          ./gradlew assembleDebug --no-daemon --stacktrace
+          echo "🧱 Iniciando compilación..."
+          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
         env:
           ANDROID_HOME: ${{ env.ANDROID_HOME }}
 
-      - name: 📤 Subir APK
+      - name: 📤 Subir APK (solo si compiló)
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: IndustrialBLE-Debug

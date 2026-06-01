@@ -8,6 +8,7 @@ import android.os.Build
 import android.util.Log
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.IOException
 import java.util.concurrent.*
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -26,10 +27,6 @@ class L2CAPConnectionManager(
     private val bluetoothAdapter: BluetoothAdapter,
     connectionPoolSize: Int = Runtime.getRuntime().availableProcessors() * 2
 ) {
-    companion object {
-        private const val TAG = "L2CAPManager"
-        private const val CONNECTION_TIMEOUT_MS = 10_000L
-    }
 
     // Pool de hilos para I/O de conexiones
     private val ioExecutor: ExecutorService = ThreadPoolExecutor(
@@ -98,13 +95,15 @@ class L2CAPConnectionManager(
 
         serverJob = ioExecutor.submit {
             try {
-                val tmp = if (Build.VERSION.SDK_INT >= 33) {
-                    bluetoothAdapter.listenUsingL2capChannel(psm)
-                } else {
-                    bluetoothAdapter.listenUsingL2capChannel()
-                }
+                val tmp = bluetoothAdapter.listenUsingL2capChannel()
                 serverSocket = tmp
-                Log.i(TAG, "Servidor L2CAP escuchando en PSM=$psm")
+                // Obtener PSM asignado dinámicamente (disponible desde API 33)
+                if (Build.VERSION.SDK_INT >= 33) {
+                    serverPsm = tmp.psm
+                } else {
+                    serverPsm = psm
+                }
+                Log.i(TAG, "Servidor L2CAP escuchando en PSM=${serverPsm}")
 
                 while (!Thread.currentThread().isInterrupted) {
                     try {
@@ -329,6 +328,8 @@ class L2CAPConnectionManager(
     )
 
     companion object {
+        private const val TAG = "L2CAPManager"
+        private const val CONNECTION_TIMEOUT_MS = 10_000L
         private val threadCounter = AtomicInteger(0)
         private val connectionIdCounter = AtomicLong(0)
     }

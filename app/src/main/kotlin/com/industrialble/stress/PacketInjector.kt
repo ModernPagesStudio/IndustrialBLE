@@ -25,11 +25,6 @@ class PacketInjector(
         ThreadFactory { Thread(it, "packet-inject-${threadCounter.incrementAndGet()}") }
     )
 ) {
-    companion object {
-        private const val TAG = "PacketInjector"
-        private const val DEFAULT_RATE_HZ = 1000L
-        private val threadCounter = AtomicInteger(0)
-    }
 
     private var scheduledTask: ScheduledFuture<*>? = null
     private val frameCounter = AtomicLong(0)
@@ -175,6 +170,9 @@ class PacketInjector(
     }
 
     companion object {
+        private const val TAG = "PacketInjector"
+        private const val DEFAULT_RATE_HZ = 1000L
+        private val threadCounter = AtomicInteger(0)
         private val bytesSentCounter = AtomicLong(0)
     }
 }
