@@ -47,7 +47,7 @@ class AggressiveDiscoveryManager(
 
     // Callbacks
     var onSensorDiscovered: ((BluetoothDevice, ScanResult) -> Unit)? = null
-    var onScanError: ((Int) -> Unit)? = null
+    var onScanError: ((String) -> Unit)? = null
     var onProbeComplete: ((BluetoothDevice, Boolean) -> Unit)? = null
     var onScanStateChanged: ((Boolean) -> Unit)? = null
 
@@ -64,8 +64,11 @@ class AggressiveDiscoveryManager(
     fun startAggressiveScan() {
         if (isScanning.getAndSet(true)) return
         if (bluetoothLeScanner == null) {
-            Log.e(TAG, "BluetoothLeScanner no disponible")
-            onScanError?.invoke(-1)
+            val msg = "Scanner BLE no disponible - Bluetooth puede estar apagado o sin permisos"
+            Log.e(TAG, msg)
+            onScanError?.invoke(msg)
+            isScanning.set(false)
+            onScanStateChanged?.invoke(false)
             return
         }
 
@@ -101,8 +104,15 @@ class AggressiveDiscoveryManager(
             }
 
             override fun onScanFailed(errorCode: Int) {
-                Log.e(TAG, "Scan falló con código: $errorCode")
-                onScanError?.invoke(errorCode)
+                val desc = when (errorCode) {
+                    ScanCallback.SCAN_FAILED_ALREADY_STARTED -> "El escaneo ya está en curso"
+                    ScanCallback.SCAN_FAILED_APPLICATION_REGISTRATION_FAILED -> "Error de registro - reinicia Bluetooth"
+                    ScanCallback.SCAN_FAILED_INTERNAL_ERROR -> "Error interno del chip Bluetooth"
+                    ScanCallback.SCAN_FAILED_FEATURE_UNSUPPORTED -> "Escaneo BLE no soportado en este dispositivo"
+                    else -> "Error desconocido (código $errorCode)"
+                }
+                Log.e(TAG, "Scan falló: $desc")
+                onScanError?.invoke(desc)
                 isScanning.set(false)
                 onScanStateChanged?.invoke(false)
             }

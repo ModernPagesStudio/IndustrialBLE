@@ -1,7 +1,11 @@
 package com.industrialble.ui
 
 import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.os.Build
 import android.os.ParcelUuid
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -72,6 +76,12 @@ data class AppUiState(
     val jamTargetAddress: String = "",
     val discoveredBtDevices: List<String> = emptyList(),
 
+    // Error handling
+    val initError: String? = null,
+
+    // Bluetooth state
+    val btState: Int = BluetoothAdapter.STATE_ON,
+
     // Config
     val targetServiceUuid: String = "0000FE95-0000-1000-8000-00805F9B34FB",
     val verificationPsm: Int = 0x0101,
@@ -103,6 +113,7 @@ class MainViewModel : ViewModel() {
     private var networkSimulator: NetworkEnvironmentSimulator? = null
     private var jammingEngine: JammingEngine? = null
     private var appContext: Context? = null
+    private var btStateReceiver: BroadcastReceiver? = null
 
     // Protocol
     private val frameBuilder = ProtocolFrameBuilder
@@ -119,30 +130,81 @@ class MainViewModel : ViewModel() {
     }
 
     // ────────────────────────────────────────────────────────────
-    // INICIALIZACIÓN
+    // INICIALIZACIÓN (con manejo global de errores)
     // ────────────────────────────────────────────────────────────
     fun initialize(bluetoothAdapter: BluetoothAdapter?, context: Context? = null) {
-        if (bluetoothAdapter == null) {
-            addLog(LogLevel.ERROR, "System", "Bluetooth no disponible en este dispositivo")
-            return
+        try {
+            if (bluetoothAdapter == null) {
+                val msg = "Bluetooth no disponible en este dispositivo"
+                addLog(LogLevel.ERROR, "System", msg)
+                _uiState.update { it.copy(initError = msg) }
+                return
+            }
+
+            val state = _uiState.value
+
+            appContext = context
+            l2capManager = try {
+                L2CAPConnectionManager(bluetoothAdapter)
+            } catch (e: Exception) {
+                throw RuntimeException("Error al crear L2CAPConnectionManager: ${e.message}", e)
+            }
+
+            discoveryManager = try {
+                AggressiveDiscoveryManager(
+                    bluetoothAdapter = bluetoothAdapter,
+                    verificationManager = l2capManager!!,
+                    targetServiceUUID = ParcelUuid.fromString(state.targetServiceUuid),
+                    verificationPSM = state.verificationPsm
+                )
+            } catch (e: Exception) {
+                throw RuntimeException("Error al crear AggressiveDiscoveryManager: ${e.message}", e)
+            }
+
+            packetInjector = try {
+                PacketInjector()
+            } catch (e: Exception) {
+                throw RuntimeException("Error al crear PacketInjector: ${e.message}", e)
+            }
+
+            networkSimulator = try {
+                NetworkEnvironmentSimulator(state.verificationPsm)
+            } catch (e: Exception) {
+                throw RuntimeException("Error al crear NetworkEnvironmentSimulator: ${e.message}", e)
+            }
+
+            if (context != null) {
+                try {
+                    jammingEngine = JammingEngine(bluetoothAdapter, context)
+                } catch (e: Exception) {
+                    addLog(LogLevel.WARN, "System", "JammingEngine no disponible: ${e.message}")
+                }
+            } else {
+                addLog(LogLevel.WARN, "System", "Context no disponible, JammingEngine desactivado")
+            }
+
+            registerBtStateReceiver(context)
+            setupCallbacks()
+
+            val btOn = bluetoothAdapter.isEnabled
+            addLog(LogLevel.INFO, "System", "Módulos inicializados correctamente")
+            _uiState.update { it.copy(
+                initError = null,
+                bluetoothEnabled = btOn,
+                btState = if (btOn) BluetoothAdapter.STATE_ON else BluetoothAdapter.STATE_OFF
+            )}
+        } catch (e: Exception) {
+            val msg = "Error de inicialización: ${e.message ?: "desconocido"}"
+            addLog(LogLevel.ERROR, "System", msg)
+            _uiState.update { it.copy(initError = msg) }
         }
+    }
 
-        val state = _uiState.value
-
-        appContext = context
-        l2capManager = L2CAPConnectionManager(bluetoothAdapter)
-        discoveryManager = AggressiveDiscoveryManager(
-            bluetoothAdapter = bluetoothAdapter,
-            verificationManager = l2capManager!!,
-            targetServiceUUID = ParcelUuid.fromString(state.targetServiceUuid),
-            verificationPSM = state.verificationPsm
-        )
-        packetInjector = PacketInjector()
-        networkSimulator = NetworkEnvironmentSimulator(state.verificationPsm)
-        jammingEngine = JammingEngine(bluetoothAdapter, context!!)
-
-        setupCallbacks()
-        addLog(LogLevel.INFO, "System", "Módulos inicializados correctamente")
+    /**
+     * Limpia el error de inicialización para reintentar.
+     */
+    fun clearInitError() {
+        _uiState.update { it.copy(initError = null) }
     }
 
     private fun setupCallbacks() {
@@ -156,8 +218,9 @@ class MainViewModel : ViewModel() {
             else "✗ No responde: ${device.address}"
             addLog(level, "Probe", msg)
         }
-        discoveryManager?.onScanError = { code ->
-            addLog(LogLevel.ERROR, "Scan", "Error de escaneo: código $code")
+        discoveryManager?.onScanError = { msg ->
+            addLog(LogLevel.ERROR, "Scan", "Error: $msg")
+            _uiState.update { it.copy(scanError = msg) }
         }
         discoveryManager?.onScanStateChanged = { scanning ->
             _uiState.update { it.copy(isScanning = scanning) }
@@ -258,6 +321,7 @@ class MainViewModel : ViewModel() {
     // DISCOVERY
     // ────────────────────────────────────────────────────────────
     fun startDiscovery() {
+        _uiState.update { it.copy(scanError = null) }
         discoveryManager?.startAggressiveScan()
         addLog(LogLevel.INFO, "Discovery", "Escaneo agresivo iniciado")
     }
@@ -421,6 +485,56 @@ class MainViewModel : ViewModel() {
     }
 
     // ────────────────────────────────────────────────────────────
+    // BLUETOOTH STATE MONITORING
+    // ────────────────────────────────────────────────────────────
+
+    private fun registerBtStateReceiver(context: Context?) {
+        if (context == null) return
+
+        val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
+        btStateReceiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
+                val previousState = intent.getIntExtra(
+                    BluetoothAdapter.EXTRA_PREVIOUS_STATE, BluetoothAdapter.STATE_UNKNOWN
+                )
+
+                when (state) {
+                    BluetoothAdapter.STATE_ON -> {
+                        _uiState.update { it.copy(bluetoothEnabled = true, btState = state) }
+                        addLog(LogLevel.INFO, "BT", "Bluetooth activado")
+                    }
+                    BluetoothAdapter.STATE_TURNING_ON -> {
+                        _uiState.update { it.copy(btState = state) }
+                        addLog(LogLevel.DEBUG, "BT", "Bluetooth encendiéndose...")
+                    }
+                    BluetoothAdapter.STATE_OFF -> {
+                        _uiState.update { it.copy(bluetoothEnabled = false, btState = state) }
+                        addLog(LogLevel.WARN, "BT", "⚠️ Bluetooth desactivado")
+                    }
+                    BluetoothAdapter.STATE_TURNING_OFF -> {
+                        _uiState.update { it.copy(btState = state) }
+                        addLog(LogLevel.WARN, "BT", "Bluetooth apagándose...")
+                    }
+                }
+            }
+        }
+
+        try {
+            context.registerReceiver(btStateReceiver, filter)
+        } catch (e: Exception) {
+            addLog(LogLevel.WARN, "BT", "Error registrando monitor BT: ${e.message}")
+        }
+    }
+
+    private fun unregisterBtStateReceiver() {
+        try {
+            btStateReceiver?.let { appContext?.unregisterReceiver(it) }
+        } catch (_: Exception) { }
+        btStateReceiver = null
+    }
+
+    // ────────────────────────────────────────────────────────────
     // LOGGING
     // ────────────────────────────────────────────────────────────
     private fun addLog(level: LogLevel, tag: String, message: String) {
@@ -441,6 +555,7 @@ class MainViewModel : ViewModel() {
     // ────────────────────────────────────────────────────────────
     override fun onCleared() {
         super.onCleared()
+        unregisterBtStateReceiver()
         discoveryManager?.stopScan()
         packetInjector?.shutdown()
         networkSimulator?.shutdown()

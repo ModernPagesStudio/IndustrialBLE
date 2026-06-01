@@ -3,9 +3,11 @@ package com.industrialble
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -33,6 +35,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -67,14 +70,45 @@ class MainActivity : ComponentActivity() {
                 val uiState by viewModel.uiState.collectAsState()
                 val context = LocalContext.current
 
-                // Inicializar Bluetooth
+                // Inicializar Bluetooth con Context + manejo de errores
                 LaunchedEffect(Unit) {
-                    val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
-                    val adapter = bluetoothManager?.adapter
-                    viewModel.initialize(adapter)
+                    try {
+                        val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
+                        val adapter = bluetoothManager?.adapter
+                        viewModel.initialize(adapter, context)
+                    } catch (e: Exception) {
+                        viewModel.initialize(null, context)
+                    }
                 }
 
-                IndustrialBLEScaffold(viewModel = viewModel, uiState = uiState)
+                // Pantalla de error crítico (bloqueante) o scaffold normal
+                val initError = uiState.initError
+                val isInitializing = uiState.logs.isEmpty() && !uiState.bluetoothEnabled
+                if (initError != null && isInitializing) {
+                    ErrorFullScreen(
+                        error = initError,
+                        onRetry = {
+                            viewModel.clearInitError()
+                            val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
+                            val adapter = bluetoothManager?.adapter
+                            viewModel.initialize(adapter, context)
+                        },
+                        onDismiss = { viewModel.clearInitError() }
+                    )
+                } else {
+                    val onRetry = {
+                        viewModel.clearInitError()
+                        val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
+                        val adapter = bluetoothManager?.adapter
+                        viewModel.initialize(adapter, context)
+                    }
+                    IndustrialBLEScaffold(
+                        viewModel = viewModel,
+                        uiState = uiState,
+                        onDismissError = { viewModel.clearInitError() },
+                        onRetryError = onRetry
+                    )
+                }
             }
         }
     }
@@ -95,15 +129,19 @@ class MainActivity : ComponentActivity() {
 
 // ─────────────────────────────────────────────────────────────────
 // SCAFFOLD PRINCIPAL
-// ─────────────────────────────────────────────────────────────────
-@OptIn(ExperimentalMaterial3Api::class)
+// ─────────────────────────────────────────────────────────────────@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun IndustrialBLEScaffold(
     viewModel: MainViewModel,
-    uiState: com.industrialble.ui.AppUiState
+    uiState: com.industrialble.ui.AppUiState,
+    onDismissError: () -> Unit = {},
+    onRetryError: () -> Unit = {}
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     val tabs = listOf("Dashboard", "Discovery", "Stress Test", "Jamming", "Logs")
+
+    // Detectar si BT está apagado
+    val isBtOff = !uiState.bluetoothEnabled
 
     Scaffold(
         topBar = {
@@ -165,13 +203,30 @@ fun IndustrialBLEScaffold(
             }
         }
     ) { padding ->
-        Box(modifier = Modifier.padding(padding)) {
-            when (selectedTab) {
-                0 -> DashboardTab(viewModel, uiState)
-                1 -> DiscoveryTab(viewModel, uiState)
-                2 -> StressTestTab(viewModel, uiState)
-                3 -> JammingTab(viewModel, uiState)
-                4 -> LogsTab(viewModel, uiState)
+        Column(modifier = Modifier.padding(padding)) {
+            // ═══ Banner BT apagado ═══
+            if (isBtOff) {
+                BtOffBanner(viewModel = viewModel, modifier = Modifier.fillMaxWidth())
+            }
+
+            // Banner de error no crítico
+            if (uiState.initError != null && !isBtOff) {
+                ErrorBanner(
+                    error = uiState.initError!!,
+                    onDismiss = onDismissError,
+                    onRetry = onRetryError,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            Box(modifier = Modifier.fillMaxSize()) {
+                when (selectedTab) {
+                    0 -> DashboardTab(viewModel, uiState)
+                    1 -> DiscoveryTab(viewModel, uiState)
+                    2 -> StressTestTab(viewModel, uiState)
+                    3 -> JammingTab(viewModel, uiState)
+                    4 -> LogsTab(viewModel, uiState)
+                }
             }
         }
     }
@@ -528,6 +583,34 @@ fun DiscoveryTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiSt
                             Spacer(Modifier.width(8.dp))
                             Text(if (uiState.isScanning) "Detener" else "Iniciar Escaneo")
                         }
+                    }
+
+                    // ═══ Error de escaneo ═══
+                    if (uiState.scanError != null) {
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
+                            ),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Filled.Warning, contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text(
+                                    uiState.scanError!!,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(8.dp))
                     }
 
                     Spacer(Modifier.height(12.dp))
@@ -1457,4 +1540,246 @@ fun HorizontalDivider() {
         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
         thickness = 0.5.dp
     )
+}
+
+// ═════════════════════════════════════════════════════════════════
+// BANNER BT APAGADO
+// ═════════════════════════════════════════════════════════════════
+@Composable
+fun BtOffBanner(viewModel: MainViewModel, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Filled.BluetoothDisabled,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "Bluetooth apagado",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onErrorContainer
+                )
+                Text(
+                    "Activa Bluetooth para usar la app",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
+                )
+            }
+            Spacer(Modifier.width(8.dp))
+            // Botón para abrir Ajustes Bluetooth
+            val context = LocalContext.current
+            OutlinedButton(
+                onClick = {
+                    val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
+                    try {
+                        context.startActivity(intent)
+                    } catch (_: Exception) {
+                        // Fallback: abrir ajustes generales
+                        context.startActivity(Intent(Settings.ACTION_SETTINGS))
+                    }
+                },
+                colors = ButtonDefaults.outlinedButtonColors(
+                    contentColor = MaterialTheme.colorScheme.error
+                ),
+                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                Text("Activar", fontSize = 12.sp)
+            }
+        }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// COMPONENTES DE ERROR GLOBAL
+// ═════════════════════════════════════════════════════════════════
+
+/**
+ * Banner de error no crítico que aparece en la parte superior del scaffold.
+ * No bloquea la interacción.
+ */
+@Composable
+fun ErrorBanner(
+    error: String,
+    onDismiss: () -> Unit,
+    onRetry: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Card(
+        modifier = modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.9f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "⚠️ Error",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    TextButton(
+                        onClick = onRetry,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Reintentar", fontSize = 12.sp)
+                    }
+                    TextButton(onClick = onDismiss) {
+                        Text("Ignorar", fontSize = 12.sp)
+                    }
+                }
+            }
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier.size(24.dp)
+            ) {
+                Icon(Icons.Filled.Close, contentDescription = "Cerrar",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(16.dp))
+            }
+        }
+    }
+}
+
+/**
+ * Pantalla completa de error crítico.
+ * Bloquea toda la UI hasta que el usuario toque Reintentar.
+ */
+@Composable
+fun ErrorFullScreen(
+    error: String,
+    onRetry: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(32.dp),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+        ) {
+            Column(
+                modifier = Modifier.padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // Icono grande
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.errorContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.BluetoothDisabled,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(40.dp)
+                    )
+                }
+
+                Spacer(Modifier.height(20.dp))
+
+                Text(
+                    "Error de Inicialización",
+                    style = MaterialTheme.typography.headlineSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.error
+                )
+
+                Spacer(Modifier.height(12.dp))
+
+                Text(
+                    error,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center
+                )
+
+                Spacer(Modifier.height(24.dp))
+
+                Button(
+                    onClick = onRetry,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.primary
+                    )
+                ) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Reintentar Inicialización")
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                OutlinedButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                ) {
+                    Text("Continuar de todos modos")
+                }
+
+                Spacer(Modifier.height(8.dp))
+
+                Text(
+                    "Si el problema persiste, revisa que el Bluetooth " +
+                            "esté activado y los permisos concedidos.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    textAlign = TextAlign.Center
+                )
+            }
+        }
+    }
 }
