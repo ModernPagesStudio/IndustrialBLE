@@ -132,13 +132,13 @@ class JammingEngine(
         log("╔══════════════════════════════════════════════╗")
         log("║   🔥 ATAQUE MULTI-CAPA BLUETOOTH INICIADO   ║")
         log("╚══════════════════════════════════════════════╝")
-        log("📱 Dispositivo: ${bluetoothAdapter.name ?: "Desconocido\"}")
-        log("📡 Bluetooth: ${if (bluetoothAdapter.isEnabled) \"ACTIVO\" else \"APAGADO\"}")
-        log("🔬 Chip: ${if (advertiser != null) \"BLE Advertiser OK\" else \"BLE Advertiser NO\"}")
+        log("📱 Dispositivo: ${bluetoothAdapter.name ?: "Desconocido"}")
+        log("📡 Bluetooth: ${if (bluetoothAdapter.isEnabled) "ACTIVO" else "APAGADO"}")
+        log("🔬 Chip: ${if (advertiser != null) "BLE Advertiser OK" else "BLE Advertiser NO"}")
 
         // Detectar soporte Extended Advertising (Bluetooth 5.x)
         supportsExtendedAdvertising = Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
-        log("📦 Extended Advertising (BLE 5.x): ${if (supportsExtendedAdvertising) \"SOPORTADO\" else \"NO\"}")
+        log("📦 Extended Advertising (BLE 5.x): ${if (supportsExtendedAdvertising) "SOPORTADO" else "NO"}")
 
         // Pre-generar payloads
         generatePayloadPools()
