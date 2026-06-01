@@ -1378,6 +1378,11 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                             Icons.Filled.Repeat
                         )
                         JamStatItem(
+                            "L2CAP",
+                            "${uiState.l2capConnectionAttempts}",
+                            Icons.Filled.Link
+                        )
+                        JamStatItem(
                             "Descubiertos",
                             "${uiState.discoveredBtDevices.size}",
                             Icons.Filled.Visibility
@@ -1391,7 +1396,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                             color = MaterialTheme.colorScheme.error
                         )
                         Spacer(Modifier.height(8.dp))
-                        Text("Inundando canales BLE 37, 38, 39...",
+                        Text("🔥 Ataque multi-capa: BLE Flood ~50/s + BLE Scan + Classic Discovery + L2CAP Attack",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                             fontWeight = FontWeight.Medium)

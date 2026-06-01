@@ -76,6 +76,7 @@ data class AppUiState(
     // Jamming
     val isJamming: Boolean = false,
     val jamCycles: Long = 0,
+    val l2capConnectionAttempts: Long = 0,
     val jamElapsedSeconds: Long = 0,
     val jamTargetAddress: String = "",
     val discoveredBtDevices: List<String> = emptyList(),
@@ -491,6 +492,7 @@ class MainViewModel : ViewModel() {
                 // Jam stats
                 isJamming = jamStats?.isActive ?: false,
                 jamCycles = jamStats?.advertisementsSent ?: 0,
+                l2capConnectionAttempts = jamStats?.l2capConnectionAttempts ?: 0,
                 jamElapsedSeconds = jamStats?.elapsedSeconds ?: 0,
                 discoveredBtDevices = jammingEngine?.discoveredDevices ?: emptyList()
             )
