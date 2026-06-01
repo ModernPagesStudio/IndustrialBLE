@@ -227,7 +227,7 @@ class MainViewModel : ViewModel() {
         }
 
         // Jamming callbacks
-        jammingEngine?.onJamStateChanged = { active ->
+        jammingEngine?.onStateChanged = { active ->
             if (!active) {
                 _uiState.update { it.copy(isJamming = false) }
             }
@@ -239,7 +239,7 @@ class MainViewModel : ViewModel() {
             }
         }
         jammingEngine?.onLog = { msg ->
-            addLog(LogLevel.INFO, "Jamming", msg)
+            addLog(LogLevel.INFO, "BLE Flood", msg)
         }
 
         // Los callbacks L2CAP se pasan inline en cada llamada a startServer/connectToServer
@@ -391,16 +391,16 @@ class MainViewModel : ViewModel() {
     // ────────────────────────────────────────────────────────────
     // JAMMING
     // ────────────────────────────────────────────────────────────
-    fun startJamming(targetAddress: String = "") {
-        jammingEngine?.start(targetAddress.ifBlank { null })
-        _uiState.update { it.copy(isJamming = true, jamTargetAddress = targetAddress) }
-        addLog(LogLevel.INFO, "Jamming", "🚀 Saturación BT iniciada" + if (targetAddress.isNotBlank()) " → $targetAddress" else "")
+    fun startJamming() {
+        jammingEngine?.start()
+        _uiState.update { it.copy(isJamming = true) }
+        addLog(LogLevel.INFO, "BLE Flood", "🔥 BLE Advertisement Flooding iniciado")
     }
 
     fun stopJamming() {
         jammingEngine?.stop()
         _uiState.update { it.copy(isJamming = false) }
-        addLog(LogLevel.INFO, "Jamming", "🛑 Saturación detenida")
+        addLog(LogLevel.INFO, "BLE Flood", "🛑 BLE Flooding detenido")
     }
 
     fun clearJamDevices() {
@@ -477,7 +477,7 @@ class MainViewModel : ViewModel() {
 
                 // Jam stats
                 isJamming = jamStats?.isActive ?: false,
-                jamCycles = jamStats?.cycles ?: 0,
+                jamCycles = jamStats?.advertisementsSent ?: 0,
                 jamElapsedSeconds = jamStats?.elapsedSeconds ?: 0,
                 discoveredBtDevices = jammingEngine?.discoveredDevices ?: emptyList()
             )

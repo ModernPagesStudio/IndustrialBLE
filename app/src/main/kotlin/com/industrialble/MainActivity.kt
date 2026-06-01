@@ -121,6 +121,7 @@ class MainActivity : ComponentActivity() {
             Manifest.permission.BLUETOOTH_ADMIN,
             Manifest.permission.BLUETOOTH_SCAN,
             Manifest.permission.BLUETOOTH_CONNECT,
+            Manifest.permission.BLUETOOTH_ADVERTISE,
         )
         if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S) {
             permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
@@ -974,8 +975,6 @@ fun FrameBuilderCard(viewModel: MainViewModel, uiState: com.industrialble.ui.App
 @Composable
 fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
     var showGuide by remember { mutableStateOf(false) }
-    var targetInput by remember { mutableStateOf("") }
-
     // Diálogo de guía para novatos
     if (showGuide) {
         AlertDialog(
@@ -994,42 +993,49 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(8.dp))
-                    Text("Esta función satura el chip Bluetooth " +
-                            "de tu teléfono al máximo, haciendo que " +
-                            "el Bluetooth se vuelva inestable.",
+                    Text("Esta función INUNDA los canales BLE (37, 38, 39) " +
+                            "con cientos de anuncios falsos por segundo. " +
+                            "Los dispositivos BLE cercanos se saturan " +
+                            "procesando estos anuncios, lo que puede " +
+                            "volver inestables las conexiones Bluetooth " +
+                            "de otros dispositivos.",
                         style = MaterialTheme.typography.bodyMedium)
 
                     Spacer(Modifier.height(16.dp))
-                    Text("📌 ¿Para qué sirve?",
+                    Text("🎯 ¿Para qué sirve en pentesting?",
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(4.dp))
-                    Text("Si tu parlante está conectado a este " +
-                            "teléfono y activas la saturación, " +
-                            "el audio se entrecortará o se " +
-                            "desconectará. Así pruebas la " +
-                            "resistencia del dispositivo.")
+                    Text("Si OTRA persona tiene un parlante conectado " +
+                            "a su teléfono, al activar el flooding " +
+                            "desde tu teléfono el audio del parlante " +
+                            "se entrecortará o se desconectará. " +
+                            "Prueba la resistencia de dispositivos " +
+                            "Bluetooth a ataques de saturación.",
+                        style = MaterialTheme.typography.bodyMedium)
 
                     Spacer(Modifier.height(16.dp))
                     Text("⚡ ¿Cómo usarlo?",
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(4.dp))
-                    Text("1. Conecta tu parlante al teléfono\n" +
-                            "2. Anota su dirección MAC (opcional)\n" +
-                            "3. Pon la MAC en el campo de texto\n" +
-                            "4. Toca el botón INICIAR JAM\n" +
-                            "5. Escucha si el audio se interrumpe\n" +
-                            "6. Toca el botón DETENER para salir")
+                    Text("1. Ve al área donde está el dispositivo objetivo\n" +
+                            "2. Toca el botón INICIAR FLOOD\n" +
+                            "3. Observa si la conexión BT se degrada\n" +
+                            "4. Toca DETENER FLOOD para salir\n" +
+                            "5. Revisa las estadísticas de anuncios enviados")
 
                     Spacer(Modifier.height(16.dp))
-                    Text("⚠️ ADVERTENCIA",
+                    Text("⚠️ ADVERTENCIA LEGAL",
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.height(4.dp))
-                    Text("Esto NO es un jammer real. Solo satura tu " +
-                            "propio chip Bluetooth. Úsalo solo en " +
-                            "dispositivos que te pertenezcan.",
+                    Text("Esto NO es un jammer RF real (haría falta " +
+                            "hardware SDR). Es flooding de anuncios BLE " +
+                            "que puede interferir con dispositivos " +
+                            "cercanos. Úsalo SOLO en dispositivos que " +
+                            "te pertenezcan o con autorización explícita. " +
+                            "El uso no autorizado puede ser ilegal.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -1078,7 +1084,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        if (uiState.isJamming) "⚠️ SATURANDO RADIO" else "MODO REPOSO",
+                        if (uiState.isJamming) "🔥 INUNDANDO BLE" else "MODO REPOSO",
                         style = MaterialTheme.typography.labelMedium,
                         color = if (uiState.isJamming) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1092,7 +1098,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                             if (uiState.isJamming) {
                                 viewModel.stopJamming()
                             } else {
-                                viewModel.startJamming(targetInput.trim())
+                                viewModel.startJamming()
                             }
                         },
                         modifier = Modifier
@@ -1112,7 +1118,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(
                                 if (uiState.isJamming) Icons.Filled.Stop
-                                else Icons.Filled.BluetoothDisabled,
+                                else Icons.Filled.WifiTethering,
                                 contentDescription = null,
                                 modifier = Modifier.size(48.dp)
                             )
@@ -1123,30 +1129,12 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                if (uiState.isJamming) "JAM" else "JAM",
+                                if (uiState.isJamming) "FLOOD" else "FLOOD",
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Black
                             )
                         }
                     }
-
-                    Spacer(Modifier.height(16.dp))
-
-                    // Dirección MAC opcional
-                    OutlinedTextField(
-                        value = targetInput,
-                        onValueChange = { targetInput = it },
-                        label = { Text("Dirección MAC del objetivo (opcional)") },
-                        placeholder = { Text("00:11:22:33:44:55") },
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true,
-                        enabled = !uiState.isJamming,
-                        leadingIcon = {
-                            Icon(Icons.Filled.MyLocation, contentDescription = null)
-                        }
-                    )
-
-                    Spacer(Modifier.height(8.dp))
 
                     // Botón de guía
                     OutlinedButton(
@@ -1173,7 +1161,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                 )
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("📊 Estadísticas de Saturación",
+                    Text("📊 Estadísticas del Flooding",
                         style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(12.dp))
                     Row(
@@ -1186,7 +1174,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                             Icons.Filled.Timer
                         )
                         JamStatItem(
-                            "Ciclos",
+                            "Anuncios",
                             "${uiState.jamCycles}",
                             Icons.Filled.Repeat
                         )
@@ -1204,7 +1192,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                             color = MaterialTheme.colorScheme.error
                         )
                         Spacer(Modifier.height(8.dp))
-                        Text("El chip Bluetooth está siendo saturado...",
+                        Text("Inundando canales BLE 37, 38, 39...",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                             fontWeight = FontWeight.Medium)
@@ -1255,7 +1243,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                                     modifier = Modifier.size(32.dp),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
                                 Spacer(Modifier.height(4.dp))
-                                Text("Activa JAM para descubrir dispositivos",
+                                Text("Activa FLOOD para descubrir dispositivos",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
                             }
@@ -1265,8 +1253,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(vertical = 4.dp)
-                                    .clickable { targetInput = device.substringBefore(" ") },
+                                    .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Icon(Icons.Filled.Bluetooth, contentDescription = null,
@@ -1277,18 +1264,13 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                                     style = MaterialTheme.typography.bodySmall,
                                     fontFamily = FontFamily.Monospace,
                                     modifier = Modifier.weight(1f))
-                                Text("tocar →",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
                             }
                             HorizontalDivider()
                         }
                     }
                 }
             }
-        }
-
-        // ═══ ADVERTENCIA ═══
+        }            // ═══ ADVERTENCIA ═══
         item {
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -1306,17 +1288,20 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                         modifier = Modifier.size(20.dp))
                     Spacer(Modifier.width(12.dp))
                     Column {
-                        Text("⚠️ Solo para pruebas",
+                        Text("⚠️ Solo para pentesting autorizado",
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.labelLarge)
                         Spacer(Modifier.height(4.dp))
-                        Text("Esta función NO es un jammer de RF real. " +
-                                "Satura el chip Bluetooth de tu propio teléfono " +
-                                "alternando escaneos a máxima velocidad. Efecto: " +
-                                "el Bluetooth se vuelve inestable y las conexiones " +
-                                "de audio pueden entrecortarse o caerse.\n\n" +
-                                "Usa solo en dispositivos que te pertenezcan.",
+                        Text("Esta función inunda los canales BLE (37, 38, 39) " +
+                                "con cientos de anuncios falsos por segundo. " +
+                                "Esto puede degradar o interrumpir conexiones " +
+                                "Bluetooth en dispositivos cercanos (audio, " +
+                                "auriculares, parlantes, etc.).\n\n" +
+                                "EFECTO: El parlante de OTRA persona puede " +
+                                "experimentar cortes de audio o desconexión.\n\n" +
+                                "Usa solo en dispositivos que te pertenezcan " +
+                                "o con autorización explícita.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
