@@ -30,12 +30,13 @@ class L2CAPConnectionManager(
 
     // Pool de hilos para I/O de conexiones
     private val ioExecutor: ExecutorService = ThreadPoolExecutor(
-        corePoolSize = connectionPoolSize,
-        maximumPoolSize = connectionPoolSize * 2,
-        keepAliveTime = 60L, TimeUnit.SECONDS,
-        workQueue = LinkedBlockingQueue<Runnable>(),
-        threadFactory = ThreadFactory {
-            Thread(it, "l2cap-worker-${threadCounter.incrementAndGet()}")
+        connectionPoolSize,
+        connectionPoolSize * 2,
+        60L, TimeUnit.SECONDS,
+        LinkedBlockingQueue<Runnable>(),
+        object : ThreadFactory {
+            override fun newThread(r: Runnable) =
+                Thread(r, "l2cap-worker-${threadCounter.incrementAndGet()}")
         }
     )
 
