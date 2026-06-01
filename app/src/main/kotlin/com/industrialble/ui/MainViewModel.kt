@@ -1,10 +1,12 @@
 package com.industrialble.ui
 
 import android.bluetooth.BluetoothAdapter
+import android.content.Context
 import android.os.ParcelUuid
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.industrialble.discovery.AggressiveDiscoveryManager
+import com.industrialble.jamming.JammingEngine
 import com.industrialble.l2cap.L2CAPConnectionManager
 import com.industrialble.protocol.FrameReassemblyBuffer
 import com.industrialble.protocol.ProtocolFrameBuilder
@@ -63,6 +65,13 @@ data class AppUiState(
     val logs: List<LogEntry> = emptyList(),
     val logFilter: String = "",
 
+    // Jamming
+    val isJamming: Boolean = false,
+    val jamCycles: Long = 0,
+    val jamElapsedSeconds: Long = 0,
+    val jamTargetAddress: String = "",
+    val discoveredBtDevices: List<String> = emptyList(),
+
     // Config
     val targetServiceUuid: String = "0000FE95-0000-1000-8000-00805F9B34FB",
     val verificationPsm: Int = 0x0101,
@@ -92,6 +101,8 @@ class MainViewModel : ViewModel() {
     private var discoveryManager: AggressiveDiscoveryManager? = null
     private var packetInjector: PacketInjector? = null
     private var networkSimulator: NetworkEnvironmentSimulator? = null
+    private var jammingEngine: JammingEngine? = null
+    private var appContext: Context? = null
 
     // Protocol
     private val frameBuilder = ProtocolFrameBuilder
@@ -110,7 +121,7 @@ class MainViewModel : ViewModel() {
     // ────────────────────────────────────────────────────────────
     // INICIALIZACIÓN
     // ────────────────────────────────────────────────────────────
-    fun initialize(bluetoothAdapter: BluetoothAdapter?) {
+    fun initialize(bluetoothAdapter: BluetoothAdapter?, context: Context? = null) {
         if (bluetoothAdapter == null) {
             addLog(LogLevel.ERROR, "System", "Bluetooth no disponible en este dispositivo")
             return
@@ -118,6 +129,7 @@ class MainViewModel : ViewModel() {
 
         val state = _uiState.value
 
+        appContext = context
         l2capManager = L2CAPConnectionManager(bluetoothAdapter)
         discoveryManager = AggressiveDiscoveryManager(
             bluetoothAdapter = bluetoothAdapter,
@@ -127,6 +139,7 @@ class MainViewModel : ViewModel() {
         )
         packetInjector = PacketInjector()
         networkSimulator = NetworkEnvironmentSimulator(state.verificationPsm)
+        jammingEngine = JammingEngine(bluetoothAdapter, context!!)
 
         setupCallbacks()
         addLog(LogLevel.INFO, "System", "Módulos inicializados correctamente")
@@ -148,6 +161,22 @@ class MainViewModel : ViewModel() {
         }
         discoveryManager?.onScanStateChanged = { scanning ->
             _uiState.update { it.copy(isScanning = scanning) }
+        }
+
+        // Jamming callbacks
+        jammingEngine?.onJamStateChanged = { active ->
+            if (!active) {
+                _uiState.update { it.copy(isJamming = false) }
+            }
+        }
+        jammingEngine?.onDeviceDiscovered = { address, name ->
+            _uiState.update { state ->
+                val updated = (state.discoveredBtDevices + "$address${if (name != null) " ($name)" else ""}").distinct()
+                state.copy(discoveredBtDevices = updated)
+            }
+        }
+        jammingEngine?.onLog = { msg ->
+            addLog(LogLevel.INFO, "Jamming", msg)
         }
 
         // Los callbacks L2CAP se pasan inline en cada llamada a startServer/connectToServer
@@ -296,6 +325,26 @@ class MainViewModel : ViewModel() {
     }
 
     // ────────────────────────────────────────────────────────────
+    // JAMMING
+    // ────────────────────────────────────────────────────────────
+    fun startJamming(targetAddress: String = "") {
+        jammingEngine?.start(targetAddress.ifBlank { null })
+        _uiState.update { it.copy(isJamming = true, jamTargetAddress = targetAddress) }
+        addLog(LogLevel.INFO, "Jamming", "🚀 Saturación BT iniciada" + if (targetAddress.isNotBlank()) " → $targetAddress" else "")
+    }
+
+    fun stopJamming() {
+        jammingEngine?.stop()
+        _uiState.update { it.copy(isJamming = false) }
+        addLog(LogLevel.INFO, "Jamming", "🛑 Saturación detenida")
+    }
+
+    fun clearJamDevices() {
+        jammingEngine?.clearDevices()
+        _uiState.update { it.copy(discoveredBtDevices = emptyList()) }
+    }
+
+    // ────────────────────────────────────────────────────────────
     // UI UPDATES
     // ────────────────────────────────────────────────────────────
     fun updateConfig(
@@ -343,6 +392,7 @@ class MainViewModel : ViewModel() {
         val injectorStats = injector?.getStats()
         val discoveryStats = discovery?.getStats()
         val simStats = simulator?.getStats()
+        val jamStats = jammingEngine?.getStats()
 
         _uiState.update { state ->
             state.copy(
@@ -359,7 +409,13 @@ class MainViewModel : ViewModel() {
                 injectionFramesSent = injectorStats?.totalFramesSent ?: 0,
                 injectionErrors = injectorStats?.totalErrors ?: 0,
                 simulatedConnections = simStats?.activeConnections ?: 0,
-                isSimulating = simStats?.isSimulating ?: false
+                isSimulating = simStats?.isSimulating ?: false,
+
+                // Jam stats
+                isJamming = jamStats?.isActive ?: false,
+                jamCycles = jamStats?.cycles ?: 0,
+                jamElapsedSeconds = jamStats?.elapsedSeconds ?: 0,
+                discoveredBtDevices = jammingEngine?.discoveredDevices ?: emptyList()
             )
         }
     }
@@ -389,5 +445,6 @@ class MainViewModel : ViewModel() {
         packetInjector?.shutdown()
         networkSimulator?.shutdown()
         l2capManager?.shutdown()
+        jammingEngine?.shutdown()
     }
 }

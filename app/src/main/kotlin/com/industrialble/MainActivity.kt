@@ -103,7 +103,7 @@ fun IndustrialBLEScaffold(
     uiState: com.industrialble.ui.AppUiState
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Dashboard", "Discovery", "Stress Test", "Logs")
+    val tabs = listOf("Dashboard", "Discovery", "Stress Test", "Jamming", "Logs")
 
     Scaffold(
         topBar = {
@@ -145,13 +145,14 @@ fun IndustrialBLEScaffold(
                                     0 -> Icons.Filled.Dashboard
                                     1 -> Icons.Filled.Radar
                                     2 -> Icons.Filled.Speed
-                                    3 -> Icons.Filled.Terminal
+                                    3 -> Icons.Filled.BluetoothDisabled
+                                    4 -> Icons.Filled.Terminal
                                     else -> Icons.Filled.Circle
                                 },
                                 contentDescription = title
                             )
                         },
-                        label = { Text(title, fontSize = 11.sp) },
+                        label = { Text(title, fontSize = 10.sp) },
                         selected = selectedTab == index,
                         onClick = { selectedTab = index },
                         colors = NavigationBarItemDefaults.colors(
@@ -169,7 +170,8 @@ fun IndustrialBLEScaffold(
                 0 -> DashboardTab(viewModel, uiState)
                 1 -> DiscoveryTab(viewModel, uiState)
                 2 -> StressTestTab(viewModel, uiState)
-                3 -> LogsTab(viewModel, uiState)
+                3 -> JammingTab(viewModel, uiState)
+                4 -> LogsTab(viewModel, uiState)
             }
         }
     }
@@ -379,6 +381,21 @@ fun StatItem(label: String, value: String, icon: ImageVector) {
         Text(value, style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onSurface)
+        Text(label, style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+fun JamStatItem(label: String, value: String, icon: ImageVector) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(icon, contentDescription = null,
+            tint = MaterialTheme.colorScheme.error,
+            modifier = Modifier.size(22.dp))
+        Spacer(Modifier.height(4.dp))
+        Text(value, style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.error)
         Text(label, style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
@@ -867,7 +884,367 @@ fun FrameBuilderCard(viewModel: MainViewModel, uiState: com.industrialble.ui.App
 }
 
 // ═════════════════════════════════════════════════════════════════
-// TAB 4: LOGS
+// TAB 4: JAMMING — SATURACIÓN DE RADIO
+// ═════════════════════════════════════════════════════════════════
+@Composable
+fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
+    var showGuide by remember { mutableStateOf(false) }
+    var targetInput by remember { mutableStateOf("") }
+
+    // Diálogo de guía para novatos
+    if (showGuide) {
+        AlertDialog(
+            onDismissRequest = { showGuide = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Info, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("🎯 Guía Rápida")
+                }
+            },
+            text = {
+                Column {
+                    Text("¿Qué hace este botón?",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Esta función satura el chip Bluetooth " +
+                            "de tu teléfono al máximo, haciendo que " +
+                            "el Bluetooth se vuelva inestable.",
+                        style = MaterialTheme.typography.bodyMedium)
+
+                    Spacer(Modifier.height(16.dp))
+                    Text("📌 ¿Para qué sirve?",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Si tu parlante está conectado a este " +
+                            "teléfono y activas la saturación, " +
+                            "el audio se entrecortará o se " +
+                            "desconectará. Así pruebas la " +
+                            "resistencia del dispositivo.")
+
+                    Spacer(Modifier.height(16.dp))
+                    Text("⚡ ¿Cómo usarlo?",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(4.dp))
+                    Text("1. Conecta tu parlante al teléfono\n" +
+                            "2. Anota su dirección MAC (opcional)\n" +
+                            "3. Pon la MAC en el campo de texto\n" +
+                            "4. Toca el botón INICIAR JAM\n" +
+                            "5. Escucha si el audio se interrumpe\n" +
+                            "6. Toca el botón DETENER para salir")
+
+                    Spacer(Modifier.height(16.dp))
+                    Text("⚠️ ADVERTENCIA",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Esto NO es un jammer real. Solo satura tu " +
+                            "propio chip Bluetooth. Úsalo solo en " +
+                            "dispositivos que te pertenezcan.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showGuide = false }) {
+                    Text("Entendido")
+                }
+            }
+        )
+    }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // ═══ BOTÓN PRINCIPAL JAM ═══
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(24.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (uiState.isJamming)
+                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.9f)
+                    else MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Indicador de estado
+                    Box(
+                        modifier = Modifier
+                            .size(12.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (uiState.isJamming) MaterialTheme.colorScheme.error
+                                else StatusOffline
+                            )
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        if (uiState.isJamming) "⚠️ SATURANDO RADIO" else "MODO REPOSO",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (uiState.isJamming) MaterialTheme.colorScheme.error
+                        else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(Modifier.height(16.dp))
+
+                    // ═══ BOTÓN GRANDE JAM ═══
+                    Button(
+                        onClick = {
+                            if (uiState.isJamming) {
+                                viewModel.stopJamming()
+                            } else {
+                                viewModel.startJamming(targetInput.trim())
+                            }
+                        },
+                        modifier = Modifier
+                            .size(180.dp)
+                            .clip(CircleShape),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (uiState.isJamming)
+                                MaterialTheme.colorScheme.error
+                            else MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        ),
+                        elevation = ButtonDefaults.buttonElevation(
+                            defaultElevation = 8.dp,
+                            pressedElevation = 16.dp
+                        )
+                    ) {
+                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                            Icon(
+                                if (uiState.isJamming) Icons.Filled.Stop
+                                else Icons.Filled.BluetoothDisabled,
+                                contentDescription = null,
+                                modifier = Modifier.size(48.dp)
+                            )
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                if (uiState.isJamming) "DETENER" else "INICIAR",
+                                style = MaterialTheme.typography.titleLarge,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                if (uiState.isJamming) "JAM" else "JAM",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+
+                    // Dirección MAC opcional
+                    OutlinedTextField(
+                        value = targetInput,
+                        onValueChange = { targetInput = it },
+                        label = { Text("Dirección MAC del objetivo (opcional)") },
+                        placeholder = { Text("00:11:22:33:44:55") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        enabled = !uiState.isJamming,
+                        leadingIcon = {
+                            Icon(Icons.Filled.MyLocation, contentDescription = null)
+                        }
+                    )
+
+                    Spacer(Modifier.height(8.dp))
+
+                    // Botón de guía
+                    OutlinedButton(
+                        onClick = { showGuide = true },
+                        modifier = Modifier.fillMaxWidth(),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
+                    ) {
+                        Icon(Icons.Filled.Help, contentDescription = null,
+                            modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("📖 Guía para novatos")
+                    }
+                }
+            }
+        }
+
+        // ═══ ESTADÍSTICAS ═══
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("📊 Estadísticas de Saturación",
+                        style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceEvenly
+                    ) {
+                        JamStatItem(
+                            "Tiempo",
+                            "${uiState.jamElapsedSeconds}s",
+                            Icons.Filled.Timer
+                        )
+                        JamStatItem(
+                            "Ciclos",
+                            "${uiState.jamCycles}",
+                            Icons.Filled.Repeat
+                        )
+                        JamStatItem(
+                            "Descubiertos",
+                            "${uiState.discoveredBtDevices.size}",
+                            Icons.Filled.Visibility
+                        )
+                    }
+
+                    if (uiState.isJamming) {
+                        Spacer(Modifier.height(12.dp))
+                        LinearProgressIndicator(
+                            modifier = Modifier.fillMaxWidth(),
+                            color = MaterialTheme.colorScheme.error
+                        )
+                        Spacer(Modifier.height(8.dp))
+                        Text("El chip Bluetooth está siendo saturado...",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
+                            fontWeight = FontWeight.Medium)
+                    }
+                }
+            }
+        }
+
+        // ═══ DISPOSITIVOS DESCUBIERTOS ═══
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Filled.DevicesOther, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Dispositivos Bluetooth Cercanos",
+                            style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.weight(1f))
+                        if (uiState.discoveredBtDevices.isNotEmpty()) {
+                            IconButton(
+                                onClick = { viewModel.clearJamDevices() },
+                                modifier = Modifier.size(24.dp)
+                            ) {
+                                Icon(Icons.Filled.Clear, contentDescription = "Limpiar",
+                                    modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+
+                    if (uiState.discoveredBtDevices.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Outlined.BluetoothSearching,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(32.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+                                Spacer(Modifier.height(4.dp))
+                                Text("Activa JAM para descubrir dispositivos",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                            }
+                        }
+                    } else {
+                        uiState.discoveredBtDevices.forEach { device ->
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(vertical = 4.dp)
+                                    .clickable { targetInput = device.substringBefore(" ") },
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Filled.Bluetooth, contentDescription = null,
+                                    modifier = Modifier.size(16.dp),
+                                    tint = StatusOnline)
+                                Spacer(Modifier.width(8.dp))
+                                Text(device,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.weight(1f))
+                                Text("tocar →",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f))
+                            }
+                            HorizontalDivider()
+                        }
+                    }
+                }
+            }
+        }
+
+        // ═══ ADVERTENCIA ═══
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+                )
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.Top
+                ) {
+                    Icon(Icons.Filled.Warning, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(20.dp))
+                    Spacer(Modifier.width(12.dp))
+                    Column {
+                        Text("⚠️ Solo para pruebas",
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(4.dp))
+                        Text("Esta función NO es un jammer de RF real. " +
+                                "Satura el chip Bluetooth de tu propio teléfono " +
+                                "alternando escaneos a máxima velocidad. Efecto: " +
+                                "el Bluetooth se vuelve inestable y las conexiones " +
+                                "de audio pueden entrecortarse o caerse.\n\n" +
+                                "Usa solo en dispositivos que te pertenezcan.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+
+        item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// TAB 5: LOGS
 // ═════════════════════════════════════════════════════════════════
 @Composable
 fun LogsTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
