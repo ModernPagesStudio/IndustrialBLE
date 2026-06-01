@@ -3,40 +3,51 @@ name: Build APK
 on:
   push:
     branches: [ main, master ]
-  workflow_dispatch:  # Permite ejecutar manualmente desde GitHub.com
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: 📥 Checkout código
+      - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: ☕ Configurar JDK 17
+      - name: ☕ JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 📦 Configurar Gradle
-        uses: gradle/actions/setup-gradle@v3
-
-      - name: 🤖 Configurar Android SDK
+      - name: 🤖 Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 🔧 Generar Gradle Wrapper (si no existe)
+      - name: 📦 Instalar platform 34
+        run: |
+          SDKMANAGER=$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager
+          if [ ! -f "$SDKMANAGER" ]; then
+            SDKMANAGER=$ANDROID_HOME/tools/bin/sdkmanager
+          fi
+          echo "Usando sdkmanager: $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses 2>&1 | grep -v "^\(All SDK package\|\[\|\)" || true
+          "$SDKMANAGER" --install "platforms;android-34" "build-tools;34.0.0" "cmdline-tools;latest" 2>&1 | tail -5
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          ls -la $ANDROID_HOME/platforms/ || echo "⚠️ platforms/ no encontrado"
+
+      - name: 🔧 Gradle Wrapper
         run: |
           if [ ! -f "gradlew" ]; then
             gradle wrapper --gradle-version 8.5
+            chmod +x gradlew
           fi
-        shell: bash
 
-      - name: 🏗️ Compilar APK de depuración
-        run: ./gradlew assembleDebug
-        shell: bash
+      - name: 🏗️ Compilar APK
+        run: |
+          ./gradlew assembleDebug --no-daemon --stacktrace
+        env:
+          ANDROID_HOME: ${{ env.ANDROID_HOME }}
 
-      - name: 📤 Subir APK como artefacto
+      - name: 📤 Subir APK
         uses: actions/upload-artifact@v4
         with:
           name: IndustrialBLE-Debug

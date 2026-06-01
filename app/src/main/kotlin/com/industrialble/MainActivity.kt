@@ -400,7 +400,7 @@ fun QuickActionsRow(viewModel: MainViewModel, uiState: com.industrialble.ui.AppU
             ) {
                 ActionButton(
                     icon = Icons.Filled.Radar,
-                    label = if (uiState.isScanning) "Escanear" else "Escanear",
+                    label = if (uiState.isScanning) "Detener" else "Escanear",
                     onClick = {
                         if (uiState.isScanning) viewModel.stopDiscovery()
                         else viewModel.startDiscovery()
@@ -1076,7 +1076,7 @@ fun formatBytes(bytes: Long): String {
 
 @Composable
 fun HorizontalDivider() {
-    HorizontalDivider(
+    androidx.compose.material3.HorizontalDivider(
         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
         thickness = 0.5.dp
     )
