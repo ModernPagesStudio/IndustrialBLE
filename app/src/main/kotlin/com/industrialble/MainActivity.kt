@@ -267,6 +267,11 @@ fun DashboardTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiSt
             QuickActionsRow(viewModel, uiState)
         }
 
+        // Updates
+        item {
+            UpdateCard(viewModel, uiState)
+        }
+
         item { Spacer(Modifier.height(16.dp)) }
     }
 }
@@ -524,6 +529,200 @@ fun ActionButton(
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
             Text(label, fontSize = 10.sp)
+        }
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════
+// TARJETA DE ACTUALIZACIONES
+// ═════════════════════════════════════════════════════════════════
+@Composable
+fun UpdateCard(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
+    val context = LocalContext.current
+    val versionName = try {
+        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.0"
+    } catch (_: Exception) { "1.0.0" }
+
+    // ═══ Diálogo: Actualización disponible ═══
+    val updateInfo = uiState.updateInfo
+    if (updateInfo != null && updateInfo.isNewer && !uiState.isDownloading) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissUpdateInfo() },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.SystemUpdateAlt, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("📦 Actualización disponible")
+                }
+            },
+            text = {
+                Column {
+                    Text("¡Nueva versión ${updateInfo.latestVersion} disponible!",
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Tu versión: $versionName",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Nueva: ${updateInfo.latestVersion}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+                    if (updateInfo.releaseNotes.isNotBlank()) {
+                        Spacer(Modifier.height(12.dp))
+                        Text("Notas de la versión:",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            updateInfo.releaseNotes.take(500),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    Spacer(Modifier.height(16.dp))
+                    Text("Se descargará e instalará automáticamente.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = {
+                Button(onClick = { viewModel.downloadAndInstallUpdate() }) {
+                    Icon(Icons.Filled.Download, contentDescription = null,
+                        modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Descargar e Instalar")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissUpdateInfo() }) {
+                    Text("Ahora no")
+                }
+            }
+        )
+    }
+
+    // ═══ Diálogo: Sin actualizaciones ═══
+    if (updateInfo != null && !updateInfo.isNewer && !uiState.isDownloading) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissUpdateInfo() },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.CheckCircle, contentDescription = null,
+                        tint = StatusOnline)
+                    Spacer(Modifier.width(8.dp))
+                    Text("✅ Estás al día")
+                }
+            },
+            text = {
+                Column {
+                    Text("Ya tienes la última versión ($versionName).",
+                        style = MaterialTheme.typography.bodyMedium)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.dismissUpdateInfo() }) {
+                    Text("OK")
+                }
+            }
+        )
+    }
+
+    // ═══ Diálogo: Error al buscar ═══
+    val updateError = uiState.updateError
+    if (updateError != null && !uiState.checkingUpdate) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissUpdateInfo() },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.ErrorOutline, contentDescription = null,
+                        tint = MaterialTheme.colorScheme.error)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Error de conexión")
+                }
+            },
+            text = {
+                Column {
+                    Text("No se pudo verificar actualizaciones.",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(updateError,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    Text("Asegúrate de tener conexión a Internet e inténtalo de nuevo.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { viewModel.dismissUpdateInfo() }) {
+                    Text("Cerrar")
+                }
+            }
+        )
+    }
+
+    // ═══ Card de actualizaciones ═══
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.SystemUpdateAlt, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.tertiary)
+                Spacer(Modifier.width(8.dp))
+                Text("Actualizaciones", style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.weight(1f))
+                Text("v$versionName",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(12.dp))
+
+            if (uiState.isDownloading) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(24.dp),
+                        strokeWidth = 3.dp
+                    )
+                    Text("Descargando actualización...",
+                        style = MaterialTheme.typography.bodyMedium)
+                }
+            } else {
+                Button(
+                    onClick = { viewModel.checkForUpdate() },
+                    modifier = Modifier.fillMaxWidth(),
+                    enabled = !uiState.checkingUpdate,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.tertiary
+                    )
+                ) {
+                    if (uiState.checkingUpdate) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(16.dp),
+                            strokeWidth = 2.dp,
+                            color = MaterialTheme.colorScheme.onTertiary
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("Verificando...")
+                    } else {
+                        Icon(Icons.Filled.Refresh, contentDescription = null,
+                            modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text("Buscar actualizaciones")
+                    }
+                }
+            }
         }
     }
 }

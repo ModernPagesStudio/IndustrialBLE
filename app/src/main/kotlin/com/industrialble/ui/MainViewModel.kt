@@ -16,6 +16,10 @@ import com.industrialble.protocol.FrameReassemblyBuffer
 import com.industrialble.protocol.ProtocolFrameBuilder
 import com.industrialble.stress.NetworkEnvironmentSimulator
 import com.industrialble.stress.PacketInjector
+import com.industrialble.BuildConfig
+import com.industrialble.updater.AutoUpdateManager
+import com.industrialble.updater.GitHubReleaseChecker
+import com.industrialble.updater.ReleaseInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -76,6 +80,12 @@ data class AppUiState(
     val jamTargetAddress: String = "",
     val discoveredBtDevices: List<String> = emptyList(),
 
+    // Update
+    val checkingUpdate: Boolean = false,
+    val updateInfo: ReleaseInfo? = null,
+    val updateError: String? = null,
+    val isDownloading: Boolean = false,
+
     // Error handling
     val initError: String? = null,
 
@@ -114,6 +124,8 @@ class MainViewModel : ViewModel() {
     private var jammingEngine: JammingEngine? = null
     private var appContext: Context? = null
     private var btStateReceiver: BroadcastReceiver? = null
+    private var autoUpdateManager: AutoUpdateManager? = null
+    private val releaseChecker = GitHubReleaseChecker()
 
     // Protocol
     private val frameBuilder = ProtocolFrameBuilder
@@ -184,6 +196,7 @@ class MainViewModel : ViewModel() {
             }
 
             registerBtStateReceiver(context)
+            autoUpdateManager = if (context != null) AutoUpdateManager(context) else null
             setupCallbacks()
 
             val btOn = bluetoothAdapter.isEnabled
@@ -553,6 +566,81 @@ class MainViewModel : ViewModel() {
     // ────────────────────────────────────────────────────────────
     // CLEANUP
     // ────────────────────────────────────────────────────────────
+    // ────────────────────────────────────────────────────────────
+    // UPDATE CHECK
+    // ────────────────────────────────────────────────────────────
+    fun checkForUpdate() {
+        if (_uiState.value.checkingUpdate) return
+
+        _uiState.update { it.copy(
+            checkingUpdate = true,
+            updateInfo = null,
+            updateError = null
+        )}
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val currentVersion = BuildConfig.VERSION_NAME
+                val releaseInfo = releaseChecker.checkForUpdate(currentVersion)
+
+                if (releaseInfo == null) {
+                    _uiState.update { it.copy(
+                        checkingUpdate = false,
+                        updateError = "No se pudo conectar con GitHub. " +
+                                "Verifica tu conexión a Internet o revisa más tarde."
+                    )}
+                    addLog(LogLevel.WARN, "Update", "Error al consultar GitHub")
+                    return@launch
+                }
+
+                _uiState.update { it.copy(
+                    checkingUpdate = false,
+                    updateInfo = releaseInfo,
+                    updateError = null
+                )}
+
+                if (releaseInfo.isNewer) {
+                    addLog(LogLevel.INFO, "Update",
+                        "📦 Nueva versión disponible: ${releaseInfo.latestVersion}")
+                } else {
+                    addLog(LogLevel.INFO, "Update",
+                        "✓ Ya tienes la última versión (${currentVersion})")
+                }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(
+                    checkingUpdate = false,
+                    updateError = "Error: ${e.message ?: "desconocido"}"
+                )}
+                addLog(LogLevel.ERROR, "Update", "Error checking update: ${e.message}")
+            }
+        }
+    }
+
+    fun dismissUpdateInfo() {
+        _uiState.update { it.copy(
+            updateInfo = null,
+            updateError = null
+        )}
+    }
+
+    fun downloadAndInstallUpdate() {
+        val info = _uiState.value.updateInfo ?: return
+        if (!info.isNewer) return
+
+        _uiState.update { it.copy(isDownloading = true) }
+        addLog(LogLevel.INFO, "Update", "📥 Descargando ${info.latestVersion}...")
+
+        autoUpdateManager?.downloadAndInstall(info.downloadUrl) {
+            _uiState.update { it.copy(
+                isDownloading = false,
+                updateInfo = null
+            )}
+        }
+    }
+
+    // ────────────────────────────────────────────────────────────
+    // CLEANUP
+    // ────────────────────────────────────────────────────────────
     override fun onCleared() {
         super.onCleared()
         unregisterBtStateReceiver()
@@ -561,5 +649,6 @@ class MainViewModel : ViewModel() {
         networkSimulator?.shutdown()
         l2capManager?.shutdown()
         jammingEngine?.shutdown()
+        autoUpdateManager?.cleanup()
     }
 }
