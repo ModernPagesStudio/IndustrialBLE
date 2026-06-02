@@ -11,8 +11,8 @@ android {
         applicationId = "com.industrialble.app"
         minSdk = 29
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.0.3"
+        versionCode = 4
+        versionName = "1.0.4"
 
         vectorDrawables {
             useSupportLibrary = true
