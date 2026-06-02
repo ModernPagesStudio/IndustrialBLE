@@ -607,7 +607,7 @@ fun WiFiTab(viewModel: MainViewModel) {
                     bruteForceProgress = bruteForceProgress,
                     bruteForceRunning = bruteForceRunning,
                     bruteForceFound = bruteForceFound,
-                    bruteForceResult = bruteForceResult,
+                    resultMessage = bruteForceResult,
                     onClose = {
                         showBruteForce = false
                         selectedSsid = ""
@@ -709,7 +709,7 @@ fun BruteForceSection(
     bruteForceProgress: Triple<Int, Int, String>,
     bruteForceRunning: Boolean,
     bruteForceFound: String,
-    bruteForceResult: String = "",
+    resultMessage: String = "",
     onClose: () -> Unit
 ) {
     val bruteForceDelay by viewModel.bruteForceDelay.collectAsState()
@@ -861,9 +861,9 @@ fun BruteForceSection(
             }
 
             // ===== RESULTADO (cuando termina sin éxito o se cancela) =====
-            if (!bruteForceRunning && bruteForceResult.isNotEmpty() && bruteForceFound.isEmpty()) {
+            if (!bruteForceRunning && resultMessage.isNotEmpty() && bruteForceFound.isEmpty()) {
                 Spacer(Modifier.height(8.dp))
-                val bgColor = if (bruteForceResult.contains("❌") || bruteForceResult.contains("⏹️"))
+                val bgColor = if (resultMessage.contains("❌") || resultMessage.contains("⏹️"))
                     Color(0xFF3E2723) else Color(0xFF1B5E20)
                 Card(
                     colors = CardDefaults.cardColors(containerColor = bgColor),
@@ -871,8 +871,8 @@ fun BruteForceSection(
                 ) {
                     Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally,
                         modifier = Modifier.fillMaxWidth()) {
-                        Text(bruteForceResult, fontSize = 14.sp,
-                            color = if (bruteForceResult.contains("encontrada")) Color(0xFF69F0AE)
+                        Text(resultMessage, fontSize = 14.sp,
+                            color = if (resultMessage.contains("encontrada")) Color(0xFF69F0AE)
                                     else Color(0xFFFFA726))
                         Spacer(Modifier.height(4.dp))
                         TextButton(onClick = { viewModel.clearBruteForceResult() }) {
