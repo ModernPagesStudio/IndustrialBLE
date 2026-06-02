@@ -216,38 +216,6 @@ class AutoUpdateManager(
         nm.notify(NOTIFY_ID, notification)
     }
 
-    private fun showReadyToInstallNotification() {
-        val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-        val apkFile = File(context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), APK_FILENAME)
-        val apkUri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.provider",
-            apkFile
-        )
-
-        val installIntent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(apkUri, "application/vnd.android.package-archive")
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
-        }
-
-        val pendingIntent = PendingIntent.getActivity(
-            context, 0, installIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
-            .setSmallIcon(android.R.drawable.ic_dialog_info)
-            .setContentTitle("📦 Actualización lista")
-            .setContentText("HackDroid se descargó correctamente. Toca para instalar.")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
-            .build()
-
-        nm.notify(NOTIFY_ID, notification)
-    }
-
     private fun showInstallSettingsNotification() {
         val settingsIntent = Intent(
             android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
@@ -286,6 +254,7 @@ class AutoUpdateManager(
     }
 
     fun cleanup() {
+        downloadId = -1
         unregisterReceiver()
     }
 
