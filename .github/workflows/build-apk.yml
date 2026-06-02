@@ -1,4 +1,4 @@
-name: Build APK + Continuous Release
+name: Build APK + Versioned Release
 
 on:
   push:
@@ -24,9 +24,42 @@ jobs:
       - name: 🤖 Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 🧱 Iniciar compilación...
+      - name: 🔢 Incrementar versión
+        id: version
         run: |
-          # Si no existe gradlew, lo generamos
+          # Leer versión actual de build.gradle.kts
+          CURRENT_VERSION=$(grep 'versionName' app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "Versión actual: $CURRENT_VERSION"
+
+          # Separar en MAJOR.MINOR.PATCH
+          IFS='.' read -r -a PARTS <<< "$CURRENT_VERSION"
+          MAJOR=${PARTS[0]:-1}
+          MINOR=${PARTS[1]:-0}
+          PATCH=${PARTS[2]:-0}
+
+          # Incrementar patch
+          NEW_PATCH=$((PATCH + 1))
+          NEW_VERSION="${MAJOR}.${MINOR}.${NEW_PATCH}"
+          echo "Nueva versión: $NEW_VERSION"
+
+          # Actualizar versionName y versionCode en build.gradle.kts
+          sed -i "s/versionName = \"$CURRENT_VERSION\"/versionName = \"$NEW_VERSION\"/" app/build.gradle.kts
+          sed -i "s/versionCode = [0-9]*/versionCode = $NEW_PATCH/" app/build.gradle.kts
+
+          # Guardar para pasos siguientes
+          echo "VERSION=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "NEW_VERSION=$NEW_VERSION" >> $GITHUB_ENV
+
+      - name: 📝 Commit de versión
+        run: |
+          git config user.name "HackDroid CI"
+          git config user.email "actions@github.com"
+          git add app/build.gradle.kts
+          git commit -m "bump: v${{ env.NEW_VERSION }} [skip ci]"
+          git push origin main
+
+      - name: 🧱 Generar Gradle Wrapper
+        run: |
           if [ ! -f gradlew ]; then
             gradle wrapper --gradle-version 8.5
           fi
@@ -34,27 +67,27 @@ jobs:
 
       - name: 🏗️ Compilar APK Debug
         run: |
-          echo "🔧 Compilando..."
+          echo "🔧 Compilando v${{ env.NEW_VERSION }}..."
           ./gradlew assembleDebug
           echo "✅ Compilación exitosa"
 
-      - name: 📦 Crear/Actualizar Release Continua
+      - name: 📦 Crear Release con versión
         uses: ncipollo/release-action@v1
         with:
-          tag: "continuous"
-          name: "📱 HackDroid - Continuous Build"
+          tag: "v${{ env.NEW_VERSION }}"
+          name: "📱 HackDroid v${{ env.NEW_VERSION }}"
           body: |
-            ## 🚀 HackDroid - Build Automático
-            
+            ## 🚀 HackDroid v${{ env.NEW_VERSION }}
+
             **Commit:** ${{ github.sha }}
             **Rama:** ${{ github.ref_name }}
-            **Fecha:** ${{ github.event.head_commit.timestamp || github.run_id }}
-            
+            **Build:** ${{ github.run_number }}
+
+            ### Cambios:
+            ${{ github.event.head_commit.message || 'Actualización automática' }}
+
             ---
             *Build generado automáticamente por GitHub Actions*
           artifacts: "app/build/outputs/apk/debug/app-debug.apk"
-          replacesArtifacts: true
-          allowUpdates: true
-          removeArtifacts: true
-          makeLatest: true
           token: ${{ secrets.GITHUB_TOKEN }}
+          makeLatest: true

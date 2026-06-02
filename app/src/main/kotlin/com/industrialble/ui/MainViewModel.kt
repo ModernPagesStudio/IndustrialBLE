@@ -10,6 +10,7 @@ import com.industrialble.tools.ExtraTools
 import com.industrialble.tools.RootChecker
 import com.industrialble.tools.WordlistGenerator
 import com.industrialble.updater.AutoUpdateManager
+import com.industrialble.BuildConfig
 import com.industrialble.updater.GitHubReleaseChecker
 import com.industrialble.updater.ReleaseInfo
 import kotlinx.coroutines.Dispatchers
@@ -174,8 +175,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     /** Verifica actualizaciones automáticamente al iniciar */
     private suspend fun autoCheckForUpdates() {
         addLog("🔄 Verificando actualizaciones...")
+        val currentVersion = BuildConfig.VERSION_NAME
         val info = withContext(Dispatchers.IO) {
-            githubReleaseChecker.checkForUpdate("1.0.0")
+            githubReleaseChecker.checkForUpdate(currentVersion)
         }
         _updateInfo.value = info
 
@@ -419,7 +421,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun checkForUpdates() {
         _checkingUpdate.value = true
         viewModelScope.launch(Dispatchers.IO) {
-            val info = githubReleaseChecker.checkForUpdate("1.0.0")
+            val info = githubReleaseChecker.checkForUpdate(BuildConfig.VERSION_NAME)
             _updateInfo.value = info
             _checkingUpdate.value = false
             if (info != null && info.downloadUrl.isNotBlank()) {
