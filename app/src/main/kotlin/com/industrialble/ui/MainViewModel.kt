@@ -138,6 +138,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _downloading = MutableStateFlow(false)
     val downloading: StateFlow<Boolean> = _downloading.asStateFlow()
 
+    private val _downloadProgress = MutableStateFlow(Pair(0L, 0L))
+    val downloadProgress: StateFlow<Pair<Long, Long>> = _downloadProgress.asStateFlow()
+
+    private var progressPollingJob: kotlinx.coroutines.Job? = null
+
     // ===== SYSTEM INFO =====
     private val _publicIp = MutableStateFlow("...")
     val publicIp: StateFlow<String> = _publicIp.asStateFlow()
@@ -178,12 +183,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addLog("📦 Actualización encontrada: ${info.latestVersion}")
             addLog("📥 Descargando automáticamente...")
 
-            // Auto-descargar
+            // Auto-descargar con barra de progreso
             _downloading.value = true
-            autoUpdateManager.downloadAndInstall(info.downloadUrl) {
-                _downloading.value = false
-                addLog("✅ Descarga completada. Revisa la notificación para instalar.")
-            }
+            _downloadProgress.value = Pair(0L, 0L)
+            startProgressPolling()
+            autoUpdateManager.downloadAndInstall(
+                downloadUrl = info.downloadUrl,
+                onProgress = { downloaded, total ->
+                    _downloadProgress.value = Pair(downloaded, total)
+                },
+                onComplete = {
+                    _downloading.value = false
+                    progressPollingJob?.cancel()
+                    addLog("✅ Descarga completada. Instalando...")
+                }
+            )
         } else {
             addLog("✅ Versión actualizada")
         }
@@ -423,16 +437,41 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         _downloading.value = true
+        _downloadProgress.value = Pair(0L, 0L)
+        startProgressPolling()
         addLog("📥 Descargando actualización...")
-        autoUpdateManager.downloadAndInstall(info.downloadUrl) {
-            _downloading.value = false
-        }
+        autoUpdateManager.downloadAndInstall(
+            downloadUrl = info.downloadUrl,
+            onProgress = { downloaded, total ->
+                _downloadProgress.value = Pair(downloaded, total)
+            },
+            onComplete = {
+                _downloading.value = false
+                progressPollingJob?.cancel()
+                addLog("✅ Descarga completada. Instalando...")
+            }
+        )
     }
 
     fun cancelDownload() {
         autoUpdateManager.cleanup()
         _downloading.value = false
+        _downloadProgress.value = Pair(0L, 0L)
+        progressPollingJob?.cancel()
         addLog("⏹️ Descarga cancelada")
+    }
+
+    private fun startProgressPolling() {
+        progressPollingJob?.cancel()
+        progressPollingJob = viewModelScope.launch {
+            while (true) {
+                delay(300)
+                val progress = autoUpdateManager.getDownloadProgress()
+                if (progress.second > 0) {
+                    _downloadProgress.value = progress
+                }
+            }
+        }
     }
 
     // ===== LOGS =====

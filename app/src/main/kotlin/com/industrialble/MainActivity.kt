@@ -1217,6 +1217,7 @@ fun AjustesTab(viewModel: MainViewModel) {
     val checkingUpdate by viewModel.checkingUpdate.collectAsState()
     val downloading by viewModel.downloading.collectAsState()
     val publicIp by viewModel.publicIp.collectAsState()
+    val downloadProgress by viewModel.downloadProgress.collectAsState()
 
     LaunchedEffect(logs.size) {
         if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1)
@@ -1238,37 +1239,59 @@ fun AjustesTab(viewModel: MainViewModel) {
                     Text("Actualizaciones", fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+
+                // ===== BARRA DE PROGRESO =====
+                if (downloading) {
+                    val (downloaded, total) = downloadProgress
+                    val progress = if (total > 0) downloaded.toFloat() / total.toFloat() else 0f
+                    val progressPct = (progress * 100).toInt()
+                    val downloadedMb = downloaded / (1024 * 1024)
+                    val totalMb = total / (1024 * 1024)
+
+                    Text("📥 Descargando... $progressPct%",
+                        fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(4.dp))
+                    LinearProgressIndicator(
+                        progress = progress,
+                        modifier = Modifier.fillMaxWidth().height(8.dp)
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text("${downloadedMb}MB / ${totalMb}MB",
+                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(6.dp))
+
                     Button(
-                        onClick = { viewModel.checkForUpdates() },
-                        enabled = !checkingUpdate && !downloading,
-                        modifier = Modifier.weight(1f)
-                    ) {
-                        if (checkingUpdate) {
-                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                            Spacer(Modifier.width(4.dp))
-                        }
-                        Text(if (checkingUpdate) "Buscando..." else "🔍 Buscar")
-                    }
-                    if (updateInfo != null && updateInfo!!.downloadUrl.isNotBlank()) {
+                        onClick = { viewModel.cancelDownload() },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("❌ Cancelar descarga") }
+                } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
-                            onClick = { viewModel.downloadUpdate() },
-                            enabled = !downloading,
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary),
+                            onClick = { viewModel.checkForUpdates() },
+                            enabled = !checkingUpdate,
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text(if (downloading) "📥 Descargando..." else "📥 Descargar")
+                            if (checkingUpdate) {
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                Spacer(Modifier.width(4.dp))
+                            }
+                            Text(if (checkingUpdate) "Buscando..." else "🔍 Buscar")
+                        }
+                        if (updateInfo != null && updateInfo!!.downloadUrl.isNotBlank()) {
+                            Button(
+                                onClick = { viewModel.downloadUpdate() },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary),
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("📥 Descargar")
+                            }
                         }
                     }
-                    if (downloading) {
-                        Button(
-                            onClick = { viewModel.cancelDownload() },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
-                            modifier = Modifier.weight(1f)
-                        ) { Text("❌ Cancelar") }
-                    }
                 }
+
                 if (updateInfo != null) {
                     Spacer(Modifier.height(4.dp))
                     Text("Versión: ${updateInfo!!.latestVersion}", fontSize = 12.sp,
