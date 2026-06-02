@@ -1349,7 +1349,7 @@ fun AjustesTab(viewModel: MainViewModel) {
                 Text("ℹ️ Acerca de", fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary)
                 Spacer(Modifier.height(4.dp))
-                InfoRow("App", "HackDroid v1.0.0")
+                InfoRow("App", "HackDroid v${com.industrialble.BuildConfig.VERSION_NAME}")
                 InfoRow("IP Pública", publicIp)
                 InfoRow("Package", "com.industrialble.app")
             }
