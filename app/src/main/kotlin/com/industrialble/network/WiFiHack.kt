@@ -102,7 +102,7 @@ class WiFiHack(private val context: Context) {
                             if (info != null && info.ssid == cleanSsid && info.networkId == netId) {
                                 onFound(password)
                                 onFinish(true)
-                                return
+                                return@Thread
                             }
                         }
                         // Eliminar la red después del intento

@@ -133,6 +133,7 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TabItem(index: Int, label: String, icon: ImageVector, selectedTab: Int, onClick: (Int) -> Unit) {
     NavigationBarItem(
@@ -602,7 +603,7 @@ fun WifiNetworkCard(
                     Box(
                         modifier = Modifier
                             .width(4.dp)
-                            .height(4.dp + it * 4.dp)
+                            .height((4 + it * 4).dp)
                             .clip(RoundedCornerShape(2.dp))
                             .background(signalColor)
                     )
