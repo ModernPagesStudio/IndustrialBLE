@@ -476,7 +476,6 @@ fun WiFiTab(viewModel: MainViewModel) {
 
     var selectedSsid by remember { mutableStateOf("") }
     var showBruteForce by remember { mutableStateOf(false) }
-    val bruteForceDelay by viewModel.bruteForceDelay.collectAsState()
 
     LazyColumn(
         modifier = Modifier

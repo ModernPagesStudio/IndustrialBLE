@@ -142,7 +142,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _publicIp = MutableStateFlow("...")
     val publicIp: StateFlow<String> = _publicIp.asStateFlow()
 
-    /** Inicializa la app */
+    /** Inicializa la app y verifica actualizaciones automáticamente */
     fun initApp() {
         viewModelScope.launch {
             _rootStatus.value = RootChecker.check(context)
@@ -160,6 +160,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 addLog("ℹ️ Sin root: ${_rootStatus.value.details}")
             }
+
+            // Auto-check de actualizaciones
+            autoCheckForUpdates()
+        }
+    }
+
+    /** Verifica actualizaciones automáticamente al iniciar */
+    private suspend fun autoCheckForUpdates() {
+        addLog("🔄 Verificando actualizaciones...")
+        val info = withContext(Dispatchers.IO) {
+            githubReleaseChecker.checkForUpdate("1.0.0")
+        }
+        _updateInfo.value = info
+
+        if (info != null && info.downloadUrl.isNotBlank()) {
+            addLog("📦 Actualización encontrada: ${info.latestVersion}")
+            addLog("📥 Descargando automáticamente...")
+
+            // Auto-descargar
+            _downloading.value = true
+            autoUpdateManager.downloadAndInstall(info.downloadUrl) {
+                _downloading.value = false
+                addLog("✅ Descarga completada. Revisa la notificación para instalar.")
+            }
+        } else {
+            addLog("✅ Versión actualizada")
         }
     }
 
