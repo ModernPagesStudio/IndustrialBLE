@@ -7,6 +7,7 @@ import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -110,14 +111,24 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
             )
         },
         bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface
+            Surface(
+                color = MaterialTheme.colorScheme.surface,
+                tonalElevation = 4.dp
             ) {
-                TabItem(0, "Red", Icons.Filled.DeviceHub, selectedTab) { selectedTab = it }
-                TabItem(1, "WiFi", Icons.Filled.Wifi, selectedTab) { selectedTab = it }
-                TabItem(2, "Wordlist", Icons.Filled.Lock, selectedTab) { selectedTab = it }
-                TabItem(3, "Extra", Icons.Filled.Extension, selectedTab) { selectedTab = it }
-                TabItem(4, "Logs", Icons.Filled.Terminal, selectedTab) { selectedTab = it }
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp)
+                        .padding(bottom = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    BottomTab(0, "Red", Icons.Filled.DeviceHub, selectedTab) { selectedTab = it }
+                    BottomTab(1, "WiFi", Icons.Filled.Wifi, selectedTab) { selectedTab = it }
+                    BottomTab(2, "Wordlist", Icons.Filled.Lock, selectedTab) { selectedTab = it }
+                    BottomTab(3, "Extra", Icons.Filled.Extension, selectedTab) { selectedTab = it }
+                    BottomTab(4, "Logs", Icons.Filled.Terminal, selectedTab) { selectedTab = it }
+                }
             }
         }
     ) { padding ->
@@ -133,22 +144,32 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TabItem(index: Int, label: String, icon: ImageVector, selectedTab: Int, onClick: (Int) -> Unit) {
-    NavigationBarItem(
-        selected = selectedTab == index,
-        onClick = { onClick(index) },
-        icon = {
-            Icon(icon, contentDescription = label,
-                tint = if (selectedTab == index) MaterialTheme.colorScheme.primary
-                else MaterialTheme.colorScheme.onSurfaceVariant)
-        },
-        label = { Text(label, fontSize = 10.sp) },
-        colors = NavigationBarItemDefaults.colors(
-            indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+fun BottomTab(index: Int, label: String, icon: ImageVector, selectedTab: Int, onClick: (Int) -> Unit) {
+    val isSelected = selectedTab == index
+    val color = if (isSelected) MaterialTheme.colorScheme.primary
+    else MaterialTheme.colorScheme.onSurfaceVariant
+
+    Column(
+        modifier = Modifier
+            .clickable { onClick(index) }
+            .padding(horizontal = 6.dp, vertical = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(
+            icon,
+            contentDescription = label,
+            tint = color,
+            modifier = Modifier.size(22.dp)
         )
-    )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            label,
+            fontSize = 10.sp,
+            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+            color = color
+        )
+    }
 }
 
 // ==================== NETWORK TAB ====================
