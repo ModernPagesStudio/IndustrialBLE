@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Shield background -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,20L54,20C54,20 38,26 32,28C28,29 26,32 26,36L26,52C26,66 38,78 54,84C70,78 82,66 82,52L82,36C82,32 80,29 76,28C70,26 54,20 54,20Z" />
+    <!-- Bolt icon -->
+    <path
+        android:fillColor="#1565C0"
+        android:pathData="M54,38L46,54L54,54L50,70L64,50L56,50L60,38Z" />
+</vector>
