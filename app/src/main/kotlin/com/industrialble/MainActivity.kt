@@ -1506,7 +1506,8 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                     Icon(Icons.Filled.Warning, contentDescription = null,
                         tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(12.dp))                            Column {
+                    Spacer(Modifier.width(12.dp))
+                    Column {
                         Text("⚠️ Solo para pentesting autorizado",
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.error,
