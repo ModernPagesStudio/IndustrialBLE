@@ -43,6 +43,7 @@ import com.industrialble.network.PortScanner
 import com.industrialble.tools.WordlistGenerator
 import com.industrialble.ui.MainViewModel
 import com.industrialble.ui.theme.IndustrialBLETheme
+import com.industrialble.updater.ReleaseInfo
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -127,7 +128,7 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                     BottomTab(1, "WiFi", Icons.Filled.Wifi, selectedTab) { selectedTab = it }
                     BottomTab(2, "Wordlist", Icons.Filled.Lock, selectedTab) { selectedTab = it }
                     BottomTab(3, "Extra", Icons.Filled.Extension, selectedTab) { selectedTab = it }
-                    BottomTab(4, "Logs", Icons.Filled.Terminal, selectedTab) { selectedTab = it }
+                    BottomTab(4, "Ajustes", Icons.Filled.Settings, selectedTab) { selectedTab = it }
                 }
             }
         }
@@ -138,7 +139,7 @@ fun MainApp(viewModel: MainViewModel = viewModel()) {
                 1 -> WiFiTab(viewModel)
                 2 -> WordlistTab(viewModel)
                 3 -> ExtraTab(viewModel)
-                4 -> LogsTab(viewModel)
+                4 -> AjustesTab(viewModel)
             }
         }
     }
@@ -898,7 +899,7 @@ fun ExtraTab(viewModel: MainViewModel) {
         }
 
         // DNS Lookup
-        ToolCard("🌐 DNS Lookup") {
+        ToolCard("🌐 DNS Lookup", "Resuelve nombres de dominio a direcciones IP. Útil para verificar si un sitio está activo y su IP.") {
             OutlinedTextField(value = dnsInput, onValueChange = { dnsInput = it },
                 label = { Text("Hostname/IP") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth(),
@@ -918,7 +919,7 @@ fun ExtraTab(viewModel: MainViewModel) {
         }
 
         // MAC Vendor
-        ToolCard("🔍 MAC Vendor") {
+        ToolCard("🔍 MAC Vendor", "Identifica el fabricante de un dispositivo por su dirección MAC. Ayuda a saber qué dispositivo encontraste en la red.") {
             OutlinedTextField(value = macInput, onValueChange = { macInput = it },
                 label = { Text("MAC (ej: 00:11:22:33:44:55)") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth())
@@ -934,7 +935,7 @@ fun ExtraTab(viewModel: MainViewModel) {
         }
 
         // Subnet Calculator
-        ToolCard("📐 Calculadora de Subred") {
+        ToolCard("📐 Calculadora de Subred", "Calcula la dirección de red, broadcast, rango de hosts y máscara a partir de una IP y CIDR.") {
             OutlinedTextField(value = subnetInput, onValueChange = { subnetInput = it },
                 label = { Text("IP/CIDR (ej: 192.168.1.0/24)") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth())
@@ -965,7 +966,7 @@ fun ExtraTab(viewModel: MainViewModel) {
         }
 
         // Base64
-        ToolCard("🔐 Base64") {
+        ToolCard("🔐 Base64", "Codifica o decodifica texto en Base64. Útil para leer tokens, datos ocultos o configuraciones.") {
             Row {
                 FilterChip(selected = b64Mode, onClick = { b64Mode = true },
                     label = { Text("Encode") }, modifier = Modifier.padding(end = 8.dp))
@@ -991,7 +992,7 @@ fun ExtraTab(viewModel: MainViewModel) {
         }
 
         // Hashes
-        ToolCard("🔒 Generar Hashes") {
+        ToolCard("🔒 Generar Hashes", "Genera hashes MD5, SHA-1 y SHA-256 de cualquier texto. Sirve para verificar integridad de archivos.") {
             OutlinedTextField(value = hashInput, onValueChange = { hashInput = it },
                 label = { Text("Texto a hashear") }, singleLine = true,
                 modifier = Modifier.fillMaxWidth())
@@ -1013,78 +1014,191 @@ fun ExtraTab(viewModel: MainViewModel) {
 }
 
 @Composable
-fun ToolCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+fun ToolCard(title: String, description: String = "", content: @Composable ColumnScope.() -> Unit) {
     Card(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
         )
     ) {
         Column(Modifier.padding(12.dp)) {
-            Text(title, fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.primary)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(title, fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary)
+            }
+            if (description.isNotEmpty()) {
+                Text(description, fontSize = 11.sp, lineHeight = 16.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+            }
             Spacer(Modifier.height(8.dp))
             content()
         }
     }
 }
 
-// ==================== LOGS TAB ====================
+// ==================== AJUSTES TAB ====================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LogsTab(viewModel: MainViewModel) {
+fun AjustesTab(viewModel: MainViewModel) {
     val logs by viewModel.logs.collectAsState()
     val listState = rememberLazyListState()
+    val rootStatus by viewModel.rootStatus.collectAsState()
+    val updateInfo by viewModel.updateInfo.collectAsState()
+    val checkingUpdate by viewModel.checkingUpdate.collectAsState()
+    val downloading by viewModel.downloading.collectAsState()
+    val publicIp by viewModel.publicIp.collectAsState()
 
     LaunchedEffect(logs.size) {
-        if (logs.isNotEmpty()) {
-            listState.animateScrollToItem(logs.size - 1)
-        }
+        if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1)
     }
 
-    Column(Modifier.fillMaxSize().padding(16.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("📋 Consola", style = MaterialTheme.typography.titleMedium,
-                color = MaterialTheme.colorScheme.primary)
+    Column(
+        modifier = Modifier.fillMaxSize().padding(16.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text("⚙️ Ajustes", style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary)
+
+        // ===== AUTO-UPDATE =====
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.SystemUpdate, null, tint = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Actualizaciones", fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { viewModel.checkForUpdates() },
+                        enabled = !checkingUpdate && !downloading,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        if (checkingUpdate) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Spacer(Modifier.width(4.dp))
+                        }
+                        Text(if (checkingUpdate) "Buscando..." else "🔍 Buscar")
+                    }
+                    if (updateInfo != null && updateInfo!!.downloadUrl.isNotBlank()) {
+                        Button(
+                            onClick = { viewModel.downloadUpdate() },
+                            enabled = !downloading,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(if (downloading) "📥 Descargando..." else "📥 Descargar")
+                        }
+                    }
+                    if (downloading) {
+                        Button(
+                            onClick = { viewModel.cancelDownload() },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFD32F2F)),
+                            modifier = Modifier.weight(1f)
+                        ) { Text("❌ Cancelar") }
+                    }
+                }
+                if (updateInfo != null) {
+                    Spacer(Modifier.height(4.dp))
+                    Text("Versión: ${updateInfo!!.latestVersion}", fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        // ===== GUÍA ROOT =====
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Star, null, tint = if (rootStatus.isRooted) Color(0xFF00C853) else MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("👑 Root", fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.weight(1f))
+                    Box(Modifier.size(10.dp).clip(CircleShape)
+                        .background(if (rootStatus.isRooted) Color(0xFF00C853) else Color(0xFF757575)))
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (rootStatus.isRooted) "ROOT" else "NO ROOT", fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (rootStatus.isRooted) Color(0xFF00C853) else Color(0xFF757575))
+                }
+                Spacer(Modifier.height(8.dp))
+
+                if (!rootStatus.isRooted) {
+                    Text("📱 Root para Redmi Note 11 Pro 5G", fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
+                    Spacer(Modifier.height(4.dp))
+                    val pasos = listOf(
+                        "1. Desbloquea el bootloader en miui.com (espera 7-30 días)",
+                        "2. Descarga e instala XiaomiTool V2 en tu PC",
+                        "3. Habilita 'Depuración USB' y 'OEM Unlock' en Ajustes > Info",
+                        "4. Conecta el teléfono a la PC y abre XiaomiTool",
+                        "5. XiaomiTool flasheará TWRP y Magisk automáticamente",
+                        "6. Al reiniciar, verás Magisk en el cajón de apps",
+                        "7. ¡Root listo! Abre esta app y verás el indicador verde"
+                    )
+                    pasos.forEach { paso ->
+                        Text(paso, fontSize = 12.sp, lineHeight = 18.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text("⚠️ Rootear anula la garantía. Respeta las leyes locales.",
+                        fontSize = 11.sp, color = Color(0xFFFFA000))
+                } else {
+                    Text("✅ ¡Dispositivo rooteado!\n${rootStatus.details}", fontSize = 12.sp,
+                        color = Color(0xFF00C853))
+                }
+            }
+        }
+
+        // ===== ACERCA DE =====
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Column(Modifier.padding(16.dp)) {
+                Text("ℹ️ Acerca de", fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.height(4.dp))
+                InfoRow("App", "HackDroid v1.0.0")
+                InfoRow("IP Pública", publicIp)
+                InfoRow("Package", "com.industrialble.app")
+            }
+        }
+
+        // ===== CONSOLA DE LOGS =====
+        Text("📋 Consola de Actividad", style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.primary)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
             TextButton(onClick = { viewModel.clearLogs() }) {
-                Icon(Icons.Filled.DeleteSweep, contentDescription = null,
-                    modifier = Modifier.size(18.dp))
+                Icon(Icons.Filled.DeleteSweep, null, Modifier.size(18.dp))
                 Spacer(Modifier.width(4.dp))
                 Text("Limpiar")
             }
         }
-
-        Spacer(Modifier.height(4.dp))
-
         Card(
-            modifier = Modifier.fillMaxSize(),
-            colors = CardDefaults.cardColors(
-                containerColor = Color(0xFF0D0D1A)
-            )
+            modifier = Modifier.fillMaxWidth().height(200.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0D0D1A))
         ) {
             if (logs.isEmpty()) {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("Consola vacía", color = Color(0xFF666666))
+                    Text("Consola vacía", color = Color(0xFF666666), fontSize = 12.sp)
                 }
             } else {
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier.padding(8.dp)
-                ) {
+                LazyColumn(state = listState, modifier = Modifier.padding(8.dp)) {
                     items(logs) { log ->
-                        Text(
-                            log,
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = Color(0xFF00FF41),
-                            lineHeight = 16.sp
-                        )
+                        Text(log, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                            color = Color(0xFF00FF41), lineHeight = 16.sp)
                     }
                 }
             }
         }
+
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+fun InfoRow(label: String, value: String) {
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        Text("$label: ", fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.width(80.dp))
+        Text(value, fontSize = 12.sp, fontWeight = FontWeight.Medium,
+            fontFamily = FontFamily.Monospace)
     }
 }

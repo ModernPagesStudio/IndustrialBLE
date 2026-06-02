@@ -9,6 +9,9 @@ import com.industrialble.network.WiFiHack
 import com.industrialble.tools.ExtraTools
 import com.industrialble.tools.RootChecker
 import com.industrialble.tools.WordlistGenerator
+import com.industrialble.updater.AutoUpdateManager
+import com.industrialble.updater.GitHubReleaseChecker
+import com.industrialble.updater.ReleaseInfo
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -61,6 +64,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _wifiScanRunning = MutableStateFlow(false)
     val wifiScanRunning: StateFlow<Boolean> = _wifiScanRunning.asStateFlow()
 
+    private val _wifiEnabled = MutableStateFlow(false)
+    val wifiEnabled: StateFlow<Boolean> = _wifiEnabled.asStateFlow()
+
     private val _savedNetworks = MutableStateFlow<List<String>>(emptyList())
     val savedNetworks: StateFlow<List<String>> = _savedNetworks.asStateFlow()
 
@@ -106,6 +112,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     // ===== LOGS =====
     private val _logs = MutableStateFlow<List<String>>(emptyList())
     val logs: StateFlow<List<String>> = _logs.asStateFlow()
+
+    // ===== AUTO-UPDATE =====
+    private val githubReleaseChecker = GitHubReleaseChecker()
+    private val autoUpdateManager = AutoUpdateManager(context)
+
+    private val _updateInfo = MutableStateFlow<ReleaseInfo?>(null)
+    val updateInfo: StateFlow<ReleaseInfo?> = _updateInfo.asStateFlow()
+
+    private val _checkingUpdate = MutableStateFlow(false)
+    val checkingUpdate: StateFlow<Boolean> = _checkingUpdate.asStateFlow()
+
+    private val _downloading = MutableStateFlow(false)
+    val downloading: StateFlow<Boolean> = _downloading.asStateFlow()
 
     // ===== SYSTEM INFO =====
     private val _publicIp = MutableStateFlow("...")
@@ -180,19 +199,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     // ===== WIFI =====
     fun scanWifi() {
+        _wifiEnabled.value = wifiHack.isWifiEnabled()
+        if (!_wifiEnabled.value) {
+            addLog("⚠️ WiFi apagado. Actívalo desde Ajustes.")
+            _wifiScanRunning.value = false
+            return
+        }
         _wifiScanRunning.value = true
         _wifiNetworks.value = emptyList()
         addLog("📶 Escaneando redes WiFi...")
 
-        wifiHack.startScan()
-
         viewModelScope.launch(Dispatchers.IO) {
-            delay(2000) // Esperar a que el scan termine
-            val networks = wifiHack.scanNetworks()
-            _wifiNetworks.value = networks
-            _savedNetworks.value = wifiHack.getSavedNetworks()
-            _wifiScanRunning.value = false
-            addLog("✅ Redes WiFi encontradas: ${networks.size}")
+            wifiHack.startScanWithFlow().collect { networks ->
+                _wifiNetworks.value = networks
+                _savedNetworks.value = wifiHack.getSavedNetworks()
+                _wifiScanRunning.value = false
+                if (networks.isEmpty()) {
+                    addLog("⚠️ No se encontraron redes. ¿WiFi encendido? ¿Permiso de ubicación?")
+                } else {
+                    addLog("✅ Redes WiFi encontradas: ${networks.size}")
+                }
+            }
         }
     }
 
@@ -282,6 +309,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // ===== AUTO-UPDATE =====
+    fun checkForUpdates() {
+        _checkingUpdate.value = true
+        viewModelScope.launch(Dispatchers.IO) {
+            val info = githubReleaseChecker.checkForUpdate("1.0.0")
+            _updateInfo.value = info
+            _checkingUpdate.value = false
+            if (info != null && info.downloadUrl.isNotBlank()) {
+                addLog("📦 Actualización disponible: ${info.latestVersion}")
+            } else {
+                addLog("ℹ️ No se pudo verificar actualizaciones")
+            }
+        }
+    }
+
+    fun downloadUpdate() {
+        val info = _updateInfo.value ?: return
+        if (info.downloadUrl.isBlank()) {
+            addLog("❌ No hay URL de descarga disponible")
+            return
+        }
+        _downloading.value = true
+        addLog("📥 Descargando actualización...")
+        autoUpdateManager.downloadAndInstall(info.downloadUrl) {
+            _downloading.value = false
+        }
+    }
+
+    fun cancelDownload() {
+        autoUpdateManager.cleanup()
+        _downloading.value = false
+        addLog("⏹️ Descarga cancelada")
+    }
+
     // ===== LOGS =====
     fun addLog(msg: String) {
         val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
@@ -291,5 +352,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearLogs() {
         _logs.value = emptyList()
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        autoUpdateManager.cleanup()
     }
 }

