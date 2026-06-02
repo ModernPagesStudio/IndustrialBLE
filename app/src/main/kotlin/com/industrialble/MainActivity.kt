@@ -1363,14 +1363,14 @@ fun AjustesTab(viewModel: MainViewModel) {
                             }
                             Text(if (checkingUpdate) "Buscando..." else "🔍 Buscar")
                         }
-                        if (updateInfo != null && updateInfo!!.downloadUrl.isNotBlank()) {
+                        if (updateInfo != null && updateInfo!!.downloadUrl.isNotBlank() && updateInfo!!.isNewer) {
                             Button(
                                 onClick = { viewModel.downloadUpdate() },
                                 colors = ButtonDefaults.buttonColors(
                                     containerColor = MaterialTheme.colorScheme.primary),
                                 modifier = Modifier.weight(1f)
                             ) {
-                                Text("📥 Descargar")
+                                Text("📥 Descargar v${updateInfo!!.latestVersion}")
                             }
                         }
                     }
