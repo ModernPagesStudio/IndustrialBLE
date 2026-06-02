@@ -80,6 +80,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _bruteForceFound = MutableStateFlow("")
     val bruteForceFound: StateFlow<String> = _bruteForceFound.asStateFlow()
 
+    private val _bruteForceDelay = MutableStateFlow(1500) // ms entre intentos
+    val bruteForceDelay: StateFlow<Int> = _bruteForceDelay.asStateFlow()
+
     // ===== WORDLIST GENERATOR =====
     private val _wordlist = MutableStateFlow<List<String>>(emptyList())
     val wordlist: StateFlow<List<String>> = _wordlist.asStateFlow()
@@ -89,6 +92,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _wordlistGenerating = MutableStateFlow(false)
     val wordlistGenerating: StateFlow<Boolean> = _wordlistGenerating.asStateFlow()
+
+    private val _maxWordlistSize = MutableStateFlow(50000)
+    val maxWordlistSize: StateFlow<Int> = _maxWordlistSize.asStateFlow()
+
+    private val _manualPasswords = MutableStateFlow<List<String>>(emptyList())
+    val manualPasswords: StateFlow<List<String>> = _manualPasswords.asStateFlow()
+
+    private val _wordlistSource = MutableStateFlow("generated") // "generated" o "manual" o "imported"
+    val wordlistSource: StateFlow<String> = _wordlistSource.asStateFlow()
 
     // ===== EXTRA TOOLS =====
     private val _dnsResult = MutableStateFlow(ExtraTools.DnsResult())
@@ -231,11 +243,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         _bruteForceRunning.value = true
         _bruteForceFound.value = ""
-        addLog("🔑 Iniciando fuerza bruta contra '$ssid' (${passwords.size} passwords)")
+        addLog("🔑 Iniciando fuerza bruta contra '$ssid' (${passwords.size} passwords, delay ${_bruteForceDelay.value}ms)")
 
         wifiHack.bruteForce(
             ssid = ssid,
             passwords = passwords,
+            delayMs = _bruteForceDelay.value,
             onProgress = { current, total, pass ->
                 _bruteForceProgress.value = Triple(current, total, pass)
             },
@@ -250,19 +263,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         )
     }
 
+    fun stopBruteForce() {
+        wifiHack.cancelBruteForce()
+        _bruteForceRunning.value = false
+        addLog("⏹️ Fuerza bruta cancelada")
+    }
+
+    fun setBruteForceDelay(delay: Int) {
+        _bruteForceDelay.value = delay
+    }
+
     // ===== WORDLIST GENERATOR =====
+    fun setMaxWordlistSize(size: Int) {
+        _maxWordlistSize.value = size
+    }
+
     fun generateWordlist(info: WordlistGenerator.PersonalInfo) {
         _wordlistGenerating.value = true
-        addLog("🔑 Generando wordlist...")
+        _wordlistSource.value = "generated"
+        addLog("🔑 Generando wordlist (max ${_maxWordlistSize.value})...")
 
         viewModelScope.launch(Dispatchers.Default) {
             val generator = WordlistGenerator()
-            val words = generator.generateWithMutations(info, 50000)
+            val words = generator.generateWithMutations(info, _maxWordlistSize.value)
             _wordlist.value = words
             _wordlistSize.value = words.size
             _wordlistGenerating.value = false
             addLog("✅ Wordlist generada: ${words.size} palabras")
         }
+    }
+
+    fun setManualPasswords(text: String) {
+        val passwords = wifiHack.parseWordlistFromText(text)
+        _manualPasswords.value = passwords
+        _wordlist.value = passwords
+        _wordlistSize.value = passwords.size
+        _wordlistSource.value = "manual"
+        addLog("📝 Wordlist manual: ${passwords.size} contraseñas")
+    }
+
+    fun importWordlist(text: String) {
+        val passwords = wifiHack.parseWordlistFromText(text)
+        if (passwords.isNotEmpty()) {
+            _wordlist.value = passwords
+            _wordlistSize.value = passwords.size
+            _wordlistSource.value = "imported"
+            addLog("📂 Wordlist importada: ${passwords.size} contraseñas")
+        } else {
+            addLog("❌ No se encontraron contraseñas válidas en el archivo")
+        }
+    }
+
+    fun removePasswordFromWordlist(index: Int) {
+        val current = _wordlist.value.toMutableList()
+        if (index in current.indices) {
+            current.removeAt(index)
+            _wordlist.value = current
+            _wordlistSize.value = current.size
+            addLog("🗑️ Contraseña eliminada")
+        }
+    }
+
+    fun clearWordlist() {
+        _wordlist.value = emptyList()
+        _wordlistSize.value = 0
+        _manualPasswords.value = emptyList()
+        addLog("🗑️ Wordlist limpiada")
     }
 
     // ===== EXTRA TOOLS =====

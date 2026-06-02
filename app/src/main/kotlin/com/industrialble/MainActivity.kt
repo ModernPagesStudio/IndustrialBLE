@@ -476,6 +476,7 @@ fun WiFiTab(viewModel: MainViewModel) {
 
     var selectedSsid by remember { mutableStateOf("") }
     var showBruteForce by remember { mutableStateOf(false) }
+    val bruteForceDelay by viewModel.bruteForceDelay.collectAsState()
 
     LazyColumn(
         modifier = Modifier
@@ -659,6 +660,8 @@ fun BruteForceSection(
     bruteForceFound: String,
     onClose: () -> Unit
 ) {
+    val bruteForceDelay by viewModel.bruteForceDelay.collectAsState()
+
     Card(
         colors = CardDefaults.cardColors(
             containerColor = MaterialTheme.colorScheme.surfaceVariant
@@ -688,41 +691,105 @@ fun BruteForceSection(
 
             Spacer(Modifier.height(8.dp))
 
-            Button(
-                onClick = { viewModel.startBruteForce(ssid, wordlist) },
-                enabled = !bruteForceRunning && wordlist.isNotEmpty(),
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error
-                )
-            ) {
-                if (bruteForceRunning) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(16.dp), strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onError)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Probando ${bruteForceProgress.first}/${bruteForceProgress.second}...")
+            // ===== VELOCIDAD =====
+            if (!bruteForceRunning) {
+                Text("⚡ Velocidad: ${bruteForceDelay}ms entre intentos",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("Rápido", fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Slider(
+                        value = bruteForceDelay.toFloat(),
+                        onValueChange = { viewModel.setBruteForceDelay(it.toInt()) },
+                        valueRange = 500f..5000f,
+                        steps = 8,
+                        modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+                    )
+                    Text("Lento", fontSize = 10.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("500ms", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("5s", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.height(8.dp))
+            }
+
+            // ===== BOTÓN PRINCIPAL =====
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                if (!bruteForceRunning) {
+                    Button(
+                        onClick = { viewModel.startBruteForce(ssid, wordlist) },
+                        enabled = wordlist.isNotEmpty(),
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(Icons.Filled.FlashOn, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Iniciar Ataque")
+                    }
                 } else {
-                    Icon(Icons.Filled.FlashOn, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Iniciar Ataque")
+                    OutlinedButton(
+                        onClick = { viewModel.stopBruteForce() },
+                        modifier = Modifier.weight(1f),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error
+                        )
+                    ) {
+                        Icon(Icons.Filled.Stop, contentDescription = null)
+                        Spacer(Modifier.width(4.dp))
+                        Text("Cancelar")
+                    }
                 }
             }
 
+            // ===== PROGRESO =====
             if (bruteForceRunning) {
-                Spacer(Modifier.height(4.dp))
-                Text("Probando: ${bruteForceProgress.third}", fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(8.dp))
+
+                // Barra de progreso
                 val progress = if (bruteForceProgress.second > 0)
                     bruteForceProgress.first.toFloat() / bruteForceProgress.second.toFloat()
                 else 0f
                 LinearProgressIndicator(
                     progress = progress,
-                    modifier = Modifier.fillMaxWidth().height(4.dp)
+                    modifier = Modifier.fillMaxWidth().height(6.dp)
                 )
+
+                Spacer(Modifier.height(4.dp))
+
+                // Info de progreso
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFF1A1A2E)
+                    )
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(
+                            "🔑 Probando ${bruteForceProgress.first}/${bruteForceProgress.second}",
+                            fontWeight = FontWeight.SemiBold, fontSize = 14.sp,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "Password: \"${bruteForceProgress.third}\"",
+                            fontSize = 13.sp, fontFamily = FontFamily.Monospace,
+                            color = Color(0xFF00FF41),
+                            maxLines = 1, overflow = TextOverflow.Ellipsis
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            "${((progress * 100).toInt())}% completado",
+                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
+            // ===== CONTRASEÑA ENCONTRADA =====
             if (bruteForceFound.isNotEmpty()) {
                 Spacer(Modifier.height(8.dp))
                 Card(
@@ -730,11 +797,12 @@ fun BruteForceSection(
                         containerColor = Color(0xFF1B5E20)
                     )
                 ) {
-                    Column(Modifier.padding(12.dp)) {
+                    Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text("🎉 CONTRASEÑA ENCONTRADA!", fontWeight = FontWeight.Bold,
-                            color = Color(0xFF69F0AE))
+                            color = Color(0xFF69F0AE), fontSize = 16.sp)
+                        Spacer(Modifier.height(8.dp))
                         Text(bruteForceFound, fontFamily = FontFamily.Monospace,
-                            fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                            fontSize = 20.sp, fontWeight = FontWeight.Bold,
                             color = Color.White)
                     }
                 }
@@ -750,8 +818,11 @@ fun WordlistTab(viewModel: MainViewModel) {
     val wordlistSize by viewModel.wordlistSize.collectAsState()
     val wordlist by viewModel.wordlist.collectAsState()
     val generating by viewModel.wordlistGenerating.collectAsState()
+    val maxSize by viewModel.maxWordlistSize.collectAsState()
+    val wordlistSource by viewModel.wordlistSource.collectAsState()
     val focusManager = LocalFocusManager.current
 
+    var tab by remember { mutableIntStateOf(0) } // 0=generar, 1=manual, 2=importar
     var nombres by remember { mutableStateOf("") }
     var apellidos by remember { mutableStateOf("") }
     var apodo by remember { mutableStateOf("") }
@@ -761,6 +832,8 @@ fun WordlistTab(viewModel: MainViewModel) {
     var mascota by remember { mutableStateOf("") }
     var ciudad by remember { mutableStateOf("") }
     var palabrasAdicionales by remember { mutableStateOf("") }
+    var manualText by remember { mutableStateOf("") }
+    var showPasswordList by remember { mutableStateOf(false) }
 
     Column(
         modifier = Modifier
@@ -769,84 +842,183 @@ fun WordlistTab(viewModel: MainViewModel) {
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        Text("🔑 Generador de Wordlist",
-            style = MaterialTheme.typography.titleMedium,
+        Text("🔑 Wordlist", style = MaterialTheme.typography.titleMedium,
             color = MaterialTheme.colorScheme.primary)
-        Text("Ingresa información de la víctima para generar contraseñas probables",
-            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("$wordlistSize contraseñas • Origen: $wordlistSource", fontSize = 12.sp,
+            color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-        Spacer(Modifier.height(4.dp))
+        // Tabs de método
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(selected = tab == 0, onClick = { tab = 0 }, label = { Text("Generar") })
+            FilterChip(selected = tab == 1, onClick = { tab = 1 }, label = { Text("Manual") })
+            FilterChip(selected = tab == 2, onClick = { tab = 2 }, label = { Text("Importar") })
+        }
 
-        OutlinedTextField(value = nombres, onValueChange = { nombres = it },
-            label = { Text("Nombres") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = apellidos, onValueChange = { apellidos = it },
-            label = { Text("Apellidos") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = apodo, onValueChange = { apodo = it },
-            label = { Text("Apodo") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = fecha, onValueChange = { fecha = it },
-            label = { Text("Fecha de Nacimiento (DD/MM/AAAA)") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
-        OutlinedTextField(value = telefono, onValueChange = { telefono = it },
-            label = { Text("Teléfono") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
-        OutlinedTextField(value = empresa, onValueChange = { empresa = it },
-            label = { Text("Empresa/ Trabajo") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = mascota, onValueChange = { mascota = it },
-            label = { Text("Mascota") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = ciudad, onValueChange = { ciudad = it },
-            label = { Text("Ciudad") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(value = palabrasAdicionales, onValueChange = { palabrasAdicionales = it },
-            label = { Text("Palabras extra (separadas por coma)") }, singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }))
+        when (tab) {
+            0 -> {
+                // === GENERADOR ===
+                OutlinedTextField(value = nombres, onValueChange = { nombres = it },
+                    label = { Text("Nombres") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = apellidos, onValueChange = { apellidos = it },
+                    label = { Text("Apellidos") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = apodo, onValueChange = { apodo = it },
+                    label = { Text("Apodo") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = fecha, onValueChange = { fecha = it },
+                    label = { Text("Fecha (DD/MM/AAAA)") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+                OutlinedTextField(value = telefono, onValueChange = { telefono = it },
+                    label = { Text("Teléfono") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
+                OutlinedTextField(value = empresa, onValueChange = { empresa = it },
+                    label = { Text("Empresa") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = mascota, onValueChange = { mascota = it },
+                    label = { Text("Mascota") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = ciudad, onValueChange = { ciudad = it },
+                    label = { Text("Ciudad") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = palabrasAdicionales, onValueChange = { palabrasAdicionales = it },
+                    label = { Text("Palabras extra (separadas por coma)") }, singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }))
 
-        Spacer(Modifier.height(8.dp))
-
-        Button(
-            onClick = {
-                focusManager.clearFocus()
-                val info = WordlistGenerator.PersonalInfo(
-                    nombres = nombres, apellidos = apellidos, apodo = apodo,
-                    fechaNacimiento = fecha, telefono = telefono, empresa = empresa,
-                    mascota = mascota, ciudad = ciudad,
-                    palabrasClave = palabrasAdicionales.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                // Slider de tamaño
+                Text("Tamaño máximo: $maxSize", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Slider(
+                    value = maxSize.toFloat(),
+                    onValueChange = { viewModel.setMaxWordlistSize(it.toInt()) },
+                    valueRange = 100f..500000f,
+                    steps = 9
                 )
-                viewModel.generateWordlist(info)
-            },
-            enabled = !generating,
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            if (generating) {
-                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                Spacer(Modifier.width(8.dp))
-                Text("Generando...")
-            } else {
-                Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Generar Wordlist")
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("100", fontSize = 10.sp)
+                    Text("500K", fontSize = 10.sp)
+                }
+
+                Button(
+                    onClick = {
+                        focusManager.clearFocus()
+                        val info = WordlistGenerator.PersonalInfo(
+                            nombres = nombres, apellidos = apellidos, apodo = apodo,
+                            fechaNacimiento = fecha, telefono = telefono, empresa = empresa,
+                            mascota = mascota, ciudad = ciudad,
+                            palabrasClave = palabrasAdicionales.split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                        )
+                        viewModel.generateWordlist(info)
+                    },
+                    enabled = !generating,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    if (generating) {
+                        CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Generando...")
+                    } else {
+                        Icon(Icons.Filled.PlayArrow, null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Generar Wordlist")
+                    }
+                }
+            }
+
+            1 -> {
+                // === MANUAL ===
+                Text("Escribe una contraseña por línea:", fontSize = 13.sp)
+                OutlinedTextField(
+                    value = manualText,
+                    onValueChange = { manualText = it },
+                    label = { Text("Contraseñas (1 por línea)") },
+                    modifier = Modifier.fillMaxWidth().height(150.dp),
+                    textStyle = LocalTextStyle.current.copy(fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = { viewModel.setManualPasswords(manualText) },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Filled.Check, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Usar")
+                    }
+                    Button(
+                        onClick = { manualText = ""; viewModel.setManualPasswords("") },
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF616161)),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Filled.Clear, null, Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Limpiar")
+                    }
+                }
+            }
+
+            2 -> {
+                // === IMPORTAR .TXT ===
+                Text("Pega el contenido del archivo .txt aquí (una contraseña por línea):",
+                    fontSize = 13.sp)
+                OutlinedTextField(
+                    value = manualText,
+                    onValueChange = { manualText = it },
+                    label = { Text("Contenido del .txt") },
+                    modifier = Modifier.fillMaxWidth().height(150.dp),
+                    textStyle = LocalTextStyle.current.copy(fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                )
+                Button(
+                    onClick = { viewModel.importWordlist(manualText) },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Filled.FileUpload, null, Modifier.size(18.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("Importar Wordlist")
+                }
             }
         }
 
+        // Wordlist actual
         if (wordlistSize > 0) {
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
+            Spacer(Modifier.height(8.dp))
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
                 Column(Modifier.padding(12.dp)) {
-                    Text("✅ Wordlist generada: $wordlistSize contraseñas",
-                        fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                    Text("Usa en la pestaña WiFi para fuerza bruta",
-                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(4.dp))
-                    Text("Primeras 10:", fontSize = 12.sp,
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("📋 Wordlist: $wordlistSize contraseñas", fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary, modifier = Modifier.weight(1f))
+                        TextButton(onClick = { viewModel.clearWordlist() }) {
+                            Icon(Icons.Filled.DeleteSweep, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                    Text("Usa en la pestaña WiFi para fuerza bruta", fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    wordlist.take(10).forEach { pw ->
-                        Text(pw, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.onSurface)
+                    Spacer(Modifier.height(4.dp))
+
+                    // Botón para mostrar/ocultar lista
+                    TextButton(onClick = { showPasswordList = !showPasswordList }) {
+                        Text(if (showPasswordList) "Ocultar lista" else "Ver/Editar lista")
+                    }
+
+                    if (showPasswordList) {
+                        Divider()
+                        Spacer(Modifier.height(4.dp))
+                        wordlist.take(100).forEachIndexed { index, pw ->
+                            Row(Modifier.fillMaxWidth().padding(vertical = 1.dp),
+                                verticalAlignment = Alignment.CenterVertically) {
+                                Text("${index + 1}.", fontSize = 10.sp, modifier = Modifier.width(24.dp),
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text(pw, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                                    modifier = Modifier.weight(1f))
+                                IconButton(
+                                    onClick = { viewModel.removePasswordFromWordlist(index) },
+                                    modifier = Modifier.size(20.dp)
+                                ) {
+                                    Icon(Icons.Filled.RemoveCircleOutline, null,
+                                        Modifier.size(14.dp), tint = MaterialTheme.colorScheme.error)
+                                }
+                            }
+                        }
+                        if (wordlistSize > 100) {
+                            Text("... y ${wordlistSize - 100} más", fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
