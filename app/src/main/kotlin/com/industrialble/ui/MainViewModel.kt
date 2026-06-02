@@ -253,6 +253,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
         _bruteForceRunning.value = true
         _bruteForceFound.value = ""
+        _bruteForceResult.value = ""
         addLog("🔑 Iniciando fuerza bruta contra '$ssid' (${passwords.size} passwords, delay ${_bruteForceDelay.value}ms)")
 
         wifiHack.bruteForce(
