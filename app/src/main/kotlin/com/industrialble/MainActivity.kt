@@ -869,8 +869,10 @@ fun BruteForceSection(
                     colors = CardDefaults.cardColors(containerColor = bgColor),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.fillMaxWidth()) {
+                    Column(
+                        modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                         Text(resultMessage, fontSize = 14.sp,
                             color = if (resultMessage.contains("encontrada")) Color(0xFF69F0AE)
                                     else Color(0xFFFFA726))
