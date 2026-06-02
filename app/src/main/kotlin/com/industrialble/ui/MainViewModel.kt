@@ -75,8 +75,9 @@ data class AppUiState(
 
     // Jamming
     val isJamming: Boolean = false,
-    val jamCycles: Long = 0,
-    val l2capConnectionAttempts: Long = 0,
+    val sdpQueriesSent: Long = 0,
+    val rfcommConnectionAttempts: Long = 0,
+    val bondingAttempts: Long = 0,
     val jamElapsedSeconds: Long = 0,
     val jamTargetAddress: String = "",
     val discoveredBtDevices: List<String> = emptyList(),
@@ -253,7 +254,7 @@ class MainViewModel : ViewModel() {
             }
         }
         jammingEngine?.onLog = { msg ->
-            addLog(LogLevel.INFO, "BLE Flood", msg)
+            addLog(LogLevel.INFO, "BT Jam", msg)
         }
 
         // Los callbacks L2CAP se pasan inline en cada llamada a startServer/connectToServer
@@ -408,13 +409,13 @@ class MainViewModel : ViewModel() {
     fun startJamming() {
         jammingEngine?.start()
         _uiState.update { it.copy(isJamming = true) }
-        addLog(LogLevel.INFO, "BLE Flood", "🔥 BLE Advertisement Flooding iniciado")
+        addLog(LogLevel.INFO, "BT Jam", "🔥 Ataque Bluetooth Clásico iniciado (SDP + RFCOMM + Bonding)")
     }
 
     fun stopJamming() {
         jammingEngine?.stop()
         _uiState.update { it.copy(isJamming = false) }
-        addLog(LogLevel.INFO, "BLE Flood", "🛑 BLE Flooding detenido")
+        addLog(LogLevel.INFO, "BT Jam", "🛑 Ataque Bluetooth Clásico detenido")
     }
 
     fun clearJamDevices() {
@@ -491,8 +492,9 @@ class MainViewModel : ViewModel() {
 
                 // Jam stats
                 isJamming = jamStats?.isActive ?: false,
-                jamCycles = jamStats?.advertisementsSent ?: 0,
-                l2capConnectionAttempts = jamStats?.l2capConnectionAttempts ?: 0,
+                sdpQueriesSent = jamStats?.sdpQueriesSent ?: 0,
+                rfcommConnectionAttempts = jamStats?.rfcommConnectionAttempts ?: 0,
+                bondingAttempts = jamStats?.bondingAttempts ?: 0,
                 jamElapsedSeconds = jamStats?.elapsedSeconds ?: 0,
                 discoveredBtDevices = jammingEngine?.discoveredDevices ?: emptyList()
             )

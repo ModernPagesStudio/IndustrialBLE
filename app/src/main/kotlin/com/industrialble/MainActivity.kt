@@ -1183,7 +1183,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                     Icon(Icons.Filled.Info, contentDescription = null,
                         tint = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.width(8.dp))
-                    Text("🎯 Guía Rápida")
+                    Text("🎯 Guía Rápida - Bluetooth Clásico")
                 }
             },
             text = {
@@ -1192,12 +1192,21 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(8.dp))
-                    Text("Esta función INUNDA los canales BLE (37, 38, 39) " +
-                            "con cientos de anuncios falsos por segundo. " +
-                            "Los dispositivos BLE cercanos se saturan " +
-                            "procesando estos anuncios, lo que puede " +
-                            "volver inestables las conexiones Bluetooth " +
-                            "de otros dispositivos.",
+                    Text("Esta función INTERFIERE con conexiones " +
+                            "de Bluetooth Clásico (BR/EDR) cercanas. " +
+                            "Usa 4 capas de ataque simultáneas:\n\n" +
+                            "1⃣ Discovery Flood: Escanea continuamente " +
+                            "dispositivos BR/EDR cercanos\n" +
+                            "2⃣ SDP Query Flood: Consulta servicios " +
+                            "SDP repetidamente en remotos\n" +
+                            "3⃣ RFCOMM Flood: Intenta conectar por " +
+                            "perfiles reales (A2DP, HSP, HFP...)\n" +
+                            "4⃣ Bonding Attack: Intenta emparejamiento " +
+                            "forzado\n\n" +
+                            "A diferencia de BLE, Bluetooth Clásico " +
+                            "usa 79 canales con salto de frecuencia " +
+                            "(AFH) y es el estándar para audio, " +
+                            "teclados, ratones y manos libres.",
                         style = MaterialTheme.typography.bodyMedium)
 
                     Spacer(Modifier.height(16.dp))
@@ -1206,11 +1215,16 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                         color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(4.dp))
                     Text("Si OTRA persona tiene un parlante conectado " +
-                            "a su teléfono, al activar el flooding " +
-                            "desde tu teléfono el audio del parlante " +
-                            "se entrecortará o se desconectará. " +
-                            "Prueba la resistencia de dispositivos " +
-                            "Bluetooth a ataques de saturación.",
+                            "por Bluetooth Clásico a su teléfono, al " +
+                            "activar este ataque desde tu teléfono el " +
+                            "audio del parlante se entrecortará o se " +
+                            "desconectará.\n\n" +
+                            "Los intentos de conexión RFCOMM a perfiles " +
+                            "de audio (A2DP, HSP) saturan el stack BT " +
+                            "del dispositivo remoto, degradando su " +
+                            "capacidad de mantener el flujo de audio.\n\n" +
+                            "Las consultas SDP forzan procesamiento " +
+                            "adicional en el chip BT del objetivo.",
                         style = MaterialTheme.typography.bodyMedium)
 
                     Spacer(Modifier.height(16.dp))
@@ -1219,22 +1233,24 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                         color = MaterialTheme.colorScheme.primary)
                     Spacer(Modifier.height(4.dp))
                     Text("1. Ve al área donde está el dispositivo objetivo\n" +
-                            "2. Toca el botón INICIAR FLOOD\n" +
-                            "3. Observa si la conexión BT se degrada\n" +
-                            "4. Toca DETENER FLOOD para salir\n" +
-                            "5. Revisa las estadísticas de anuncios enviados")
+                            "2. Asegúrate que tu Bluetooth esté activado\n" +
+                            "3. Toca el botón INICIAR ATAQUE\n" +
+                            "4. Observa si la conexión BT del objetivo se degrada\n" +
+                            "5. Revisa las estadísticas (SDP, RFCOMM, Bonding)\n" +
+                            "6. Toca DETENER ATAQUE para salir")
 
                     Spacer(Modifier.height(16.dp))
                     Text("⚠️ ADVERTENCIA LEGAL",
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.error)
                     Spacer(Modifier.height(4.dp))
-                    Text("Esto NO es un jammer RF real (haría falta " +
-                            "hardware SDR). Es flooding de anuncios BLE " +
-                            "que puede interferir con dispositivos " +
-                            "cercanos. Úsalo SOLO en dispositivos que " +
-                            "te pertenezcan o con autorización explícita. " +
-                            "El uso no autorizado puede ser ilegal.",
+                    Text("Esto NO es un jammer RF físico (haría falta " +
+                            "hardware SDR). Es una saturación del stack " +
+                            "Bluetooth Clásico mediante consultas SDP, " +
+                            "intentos de conexión RFCOMM y emparejamiento.\n\n" +
+                            "Úsalo SOLO en dispositivos que te pertenezcan " +
+                            "o con autorización explícita. El uso no " +
+                            "autorizado puede ser ilegal.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
@@ -1283,7 +1299,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        if (uiState.isJamming) "🔥 INUNDANDO BLE" else "MODO REPOSO",
+                        if (uiState.isJamming) "🔥 ATACANDO BT CLÁSICO" else "MODO REPOSO",
                         style = MaterialTheme.typography.labelMedium,
                         color = if (uiState.isJamming) MaterialTheme.colorScheme.error
                         else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1317,7 +1333,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
                             Icon(
                                 if (uiState.isJamming) Icons.Filled.Stop
-                                else Icons.Filled.WifiTethering,
+                                else Icons.Filled.Bluetooth,
                                 contentDescription = null,
                                 modifier = Modifier.size(48.dp)
                             )
@@ -1328,7 +1344,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                if (uiState.isJamming) "FLOOD" else "FLOOD",
+                                if (uiState.isJamming) "ATAQUE" else "ATAQUE",
                                 style = MaterialTheme.typography.headlineSmall,
                                 fontWeight = FontWeight.Black
                             )
@@ -1373,19 +1389,19 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                             Icons.Filled.Timer
                         )
                         JamStatItem(
-                            "Anuncios",
-                            "${uiState.jamCycles}",
-                            Icons.Filled.Repeat
+                            "Consultas SDP",
+                            "${uiState.sdpQueriesSent}",
+                            Icons.Filled.Search
                         )
                         JamStatItem(
-                            "L2CAP",
-                            "${uiState.l2capConnectionAttempts}",
+                            "RFCOMM",
+                            "${uiState.rfcommConnectionAttempts}",
                             Icons.Filled.Link
                         )
                         JamStatItem(
-                            "Descubiertos",
-                            "${uiState.discoveredBtDevices.size}",
-                            Icons.Filled.Visibility
+                            "Bonding",
+                            "${uiState.bondingAttempts}",
+                            Icons.Filled.Lock
                         )
                     }
 
@@ -1396,7 +1412,7 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                             color = MaterialTheme.colorScheme.error
                         )
                         Spacer(Modifier.height(8.dp))
-                        Text("🔥 Ataque multi-capa: BLE Flood ~50/s + BLE Scan + Classic Discovery + L2CAP Attack",
+                        Text("🔥 Ataque multi-capa BT Clásico: Discovery Flood + SDP Query Flood + RFCOMM Connections + Bonding Attack",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                             fontWeight = FontWeight.Medium)
@@ -1490,22 +1506,28 @@ fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiStat
                     Icon(Icons.Filled.Warning, contentDescription = null,
                         tint = MaterialTheme.colorScheme.error,
                         modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Column {
+                    Spacer(Modifier.width(12.dp))                            Column {
                         Text("⚠️ Solo para pentesting autorizado",
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.error,
                             style = MaterialTheme.typography.labelLarge)
                         Spacer(Modifier.height(4.dp))
-                        Text("Esta función inunda los canales BLE (37, 38, 39) " +
-                                "con cientos de anuncios falsos por segundo. " +
-                                "Esto puede degradar o interrumpir conexiones " +
-                                "Bluetooth en dispositivos cercanos (audio, " +
-                                "auriculares, parlantes, etc.).\n\n" +
+                        Text("Esta función INTERFIERE con conexiones " +
+                                "Bluetooth Clásico (BR/EDR) cercanas. " +
+                                "Usa consultas SDP, intentos de conexión " +
+                                "RFCOMM a perfiles reales (A2DP, HSP, " +
+                                "HFP, SPP, etc.) e intentos de " +
+                                "emparejamiento.\n\n" +
                                 "EFECTO: El parlante de OTRA persona puede " +
-                                "experimentar cortes de audio o desconexión.\n\n" +
-                                "Usa solo en dispositivos que te pertenezcan " +
-                                "o con autorización explícita.",
+                                "experimentar cortes de audio, mayor " +
+                                "latencia o desconexión.\n\n" +
+                                "DIFERENCIA CON BLE: Bluetooth Clásico " +
+                                "(BR/EDR) es el estándar que usan " +
+                                "parlantes, auriculares, manos libres " +
+                                "de auto, teclados y ratones. No los " +
+                                "canales BLE 37/38/39.\n\n" +
+                                "Usa solo en dispositivos que te " +
+                                "pertenezcan o con autorización explícita.",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
