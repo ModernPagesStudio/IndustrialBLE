@@ -1,4 +1,4 @@
-name: Build APK
+name: Build APK + Continuous Release
 
 on:
   push:
@@ -8,83 +8,50 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
       - name: 📥 Checkout
         uses: actions/checkout@v4
 
-      - name: ☕ JDK 17
+      - name: ☕ Setup JDK 17
         uses: actions/setup-java@v4
         with:
           java-version: '17'
           distribution: 'temurin'
 
-      - name: 🤖 Android SDK
+      - name: 🤖 Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: 📦 Instalar plataforma 34
+      - name: 🧱 Iniciar compilación...
         run: |
-          echo "🔍 Buscando sdkmanager..."
-          SDKMANAGER=""
-          for candidate in \
-            "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "$ANDROID_HOME/tools/bin/sdkmanager" \
-            "/usr/local/lib/android/sdk/cmdline-tools/latest/bin/sdkmanager" \
-            "/usr/local/lib/android/sdk/tools/bin/sdkmanager" \
-            "sdkmanager"
-          do
-            if command -v "$candidate" &>/dev/null || [ -f "$candidate" ]; then
-              SDKMANAGER="$candidate"
-              echo "✓ Encontrado: $SDKMANAGER"
-              break
-            fi
-          done
-
-          if [ -z "$SDKMANAGER" ]; then
-            echo "❌ sdkmanager no encontrado"
-            echo "ANDROID_HOME=$ANDROID_HOME"
-            ls -la "$ANDROID_HOME/" 2>/dev/null || echo "ANDROID_HOME no existe"
-            exit 1
-          fi
-
-          echo "📋 Aceptando licencias..."
-          yes | "$SDKMANAGER" --licenses 2>&1 | tail -3
-
-          echo "📦 Instalando platforms;android-34..."
-          "$SDKMANAGER" --install "platforms;android-34" 2>&1 | tail -10
-
-          echo "📦 Instalando build-tools;34.0.0..."
-          "$SDKMANAGER" --install "build-tools;34.0.0" 2>&1 | tail -5
-
-          echo "📦 Verificando instalación..."
-          ls -la "$ANDROID_HOME/platforms/" 2>/dev/null || (echo "❌ platforms/ no encontrado" && exit 1)
-          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
-          echo "✅ SDK listo"
-
-      - name: 📄 Crear local.properties
-        run: |
-          echo "sdk.dir=$ANDROID_HOME" > local.properties
-          echo "✓ local.properties creado"
-
-      - name: 🔧 Gradle Wrapper
-        run: |
-          if [ ! -f "gradlew" ]; then
+          # Si no existe gradlew, lo generamos
+          if [ ! -f gradlew ]; then
             gradle wrapper --gradle-version 8.5
-            chmod +x gradlew
           fi
           chmod +x gradlew
 
-      - name: 🏗️ Compilar APK
+      - name: 🏗️ Compilar APK Debug
         run: |
-          echo "🧱 Iniciando compilación..."
-          ./gradlew assembleDebug --no-daemon --stacktrace 2>&1
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_HOME }}
+          echo "🔧 Compilando..."
+          ./gradlew assembleDebug
+          echo "✅ Compilación exitosa"
 
-      - name: 📤 Subir APK (solo si compiló)
-        if: success()
-        uses: actions/upload-artifact@v4
+      - name: 📦 Crear/Actualizar Release Continua
+        uses: ncipollo/release-action@v1
         with:
-          name: IndustrialBLE-Debug
-          path: app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
+          tag: "continuous"
+          name: "📱 HackDroid - Continuous Build"
+          body: |
+            ## 🚀 HackDroid - Build Automático
+            
+            **Commit:** ${{ github.sha }}
+            **Rama:** ${{ github.ref_name }}
+            **Fecha:** ${{ github.event.head_commit.timestamp || github.run_id }}
+            
+            ---
+            *Build generado automáticamente por GitHub Actions*
+          artifacts: "app/build/outputs/apk/debug/app-debug.apk"
+          replacesArtifacts: true
+          allowUpdates: true
+          removeArtifacts: true
+          makeLatest: true
+          token: ${{ secrets.GITHUB_TOKEN }}

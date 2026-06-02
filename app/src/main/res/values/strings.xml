@@ -1,8 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Industrial BLE</string>
-    <string name="tab_dashboard">Dashboard</string>
-    <string name="tab_discovery">Discovery</string>
-    <string name="tab_stress">Stress Test</string>
+    <string name="app_name">HackDroid</string>
+    <string name="tab_red">Red</string>
+    <string name="tab_wifi">WiFi</string>
+    <string name="tab_wordlist">Wordlist</string>
+    <string name="tab_extra">Extra</string>
     <string name="tab_logs">Logs</string>
 </resources>

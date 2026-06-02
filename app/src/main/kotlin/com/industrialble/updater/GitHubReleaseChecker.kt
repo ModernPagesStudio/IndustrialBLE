@@ -13,12 +13,18 @@ data class ReleaseInfo(
     val latestVersion: String,
     val downloadUrl: String,
     val releaseNotes: String,
-    val isNewer: Boolean
+    val isNewer: Boolean,
+    val publishedAt: String = "",
+    val isContinuous: Boolean = false
 )
 
 /**
  * Verifica la última versión disponible en GitHub Releases.
- * Usa la API pública de GitHub (sin autenticación, sujeta a rate limiting).
+ *
+ * Soporta dos modos:
+ * 1. Releases con versionado semántico (v1.0.0, v1.1.0, etc.)
+ * 2. Release "continuous" que se actualiza automáticamente en cada build de GitHub Actions
+ *    (sin necesidad de versionado manual)
  */
 class GitHubReleaseChecker(
     private val repoOwner: String = "ModernPagesStudio",
@@ -28,12 +34,13 @@ class GitHubReleaseChecker(
     companion object {
         private const val API_URL = "https://api.github.com/repos/%s/%s/releases/latest"
         private const val TIMEOUT_MS = 10_000
+        private const val CONTINUOUS_TAG = "continuous"
     }
 
     /**
      * Consulta la API de GitHub y devuelve la información de la última release.
      * @param currentVersion versión actual en formato "1.0.0"
-     * @return ReleaseInfo con datos de la última release
+     * @return ReleaseInfo o null si hay error
      */
     suspend fun checkForUpdate(currentVersion: String): ReleaseInfo? = withContext(Dispatchers.IO) {
         try {
@@ -49,7 +56,6 @@ class GitHubReleaseChecker(
 
             val responseCode = connection.responseCode
             if (responseCode != 200) {
-                // Si hay error (rate limit, repo privado, etc.)
                 connection.disconnect()
                 return@withContext null
             }
@@ -58,11 +64,12 @@ class GitHubReleaseChecker(
             connection.disconnect()
 
             val json = JSONObject(response)
-            val tagName = json.optString("tag_name", "") // ej: "v1.1.0"
+            val tagName = json.optString("tag_name", "")
             val releaseNotes = json.optString("body", "Sin notas de lanzamiento.")
+            val publishedAt = json.optString("published_at", "")
             val assets = json.optJSONArray("assets")
 
-            // Buscar el primer APK en los assets
+            // Buscar APK en los assets
             var downloadUrl = ""
             if (assets != null) {
                 for (i in 0 until assets.length()) {
@@ -75,30 +82,35 @@ class GitHubReleaseChecker(
                 }
             }
 
-            // Si no se encontró un APK en assets, intentar con la URL del release tag
             if (downloadUrl.isBlank()) {
-                downloadUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tagName/app-release.apk"
+                downloadUrl = "https://github.com/$repoOwner/$repoName/releases/download/$tagName/app-debug.apk"
             }
 
-            val latestVersion = tagName.removePrefix("v") // "1.1.0"
-            val isNewer = compareVersions(latestVersion, currentVersion) > 0
+            // === DETECTAR SI ES RELEASE CONTINUA (GitHub Actions) ===
+            val isContinuous = tagName == CONTINUOUS_TAG
+
+            val isNewer = if (isContinuous) {
+                // Siempre mostrar como disponible si se encontró la release
+                true
+            } else {
+                // Comparación semántica normal
+                val latestVersion = tagName.removePrefix("v")
+                compareVersions(latestVersion, currentVersion) > 0
+            }
 
             ReleaseInfo(
-                latestVersion = latestVersion,
+                latestVersion = if (isContinuous) "Build ${publishedAt.take(10)}" else tagName.removePrefix("v"),
                 downloadUrl = downloadUrl,
                 releaseNotes = releaseNotes.trim(),
-                isNewer = isNewer
+                isNewer = isNewer,
+                publishedAt = publishedAt,
+                isContinuous = isContinuous
             )
         } catch (e: Exception) {
-            // Error de red, timeout, etc.
             null
         }
     }
 
-    /**
-     * Compara versiones semánticas "1.0.0" > "0.9.9"
-     * @return positivo si v1 > v2, negativo si v1 < v2, 0 si igual
-     */
     private fun compareVersions(v1: String, v2: String): Int {
         val parts1 = v1.split(".").map { it.toIntOrNull() ?: 0 }
         val parts2 = v2.split(".").map { it.toIntOrNull() ?: 0 }

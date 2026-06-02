@@ -1,658 +1,295 @@
 package com.industrialble.ui
 
-import android.bluetooth.BluetoothAdapter
-import android.content.BroadcastReceiver
-import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
-import android.os.Build
-import android.os.ParcelUuid
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import com.industrialble.discovery.AggressiveDiscoveryManager
-import com.industrialble.jamming.JammingEngine
-import com.industrialble.l2cap.L2CAPConnectionManager
-import com.industrialble.protocol.FrameReassemblyBuffer
-import com.industrialble.protocol.ProtocolFrameBuilder
-import com.industrialble.stress.NetworkEnvironmentSimulator
-import com.industrialble.stress.PacketInjector
-import com.industrialble.BuildConfig
-import com.industrialble.updater.AutoUpdateManager
-import com.industrialble.updater.GitHubReleaseChecker
-import com.industrialble.updater.ReleaseInfo
+import com.industrialble.network.NetworkScanner
+import com.industrialble.network.PortScanner
+import com.industrialble.network.WiFiHack
+import com.industrialble.tools.ExtraTools
+import com.industrialble.tools.RootChecker
+import com.industrialble.tools.WordlistGenerator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.util.UUID
+import kotlinx.coroutines.withContext
 
-// ─────────────────────────────────────────────────────────────────
-// ESTADOS DE UI
-// ─────────────────────────────────────────────────────────────────
-data class AppUiState(
-    // Bluetooth
-    val bluetoothEnabled: Boolean = false,
-    val permissionsGranted: Boolean = false,
+class MainViewModel(application: Application) : AndroidViewModel(application) {
 
-    // Server
-    val serverListening: Boolean = false,
-    val serverPsm: Int = -1,
-    val serverConnections: Int = 0,
+    private val context = application.applicationContext
+    private val networkScanner = NetworkScanner(context)
+    private val portScanner = PortScanner()
+    private val wifiHack = WiFiHack(context)
 
-    // Client
-    val clientConnections: List<L2CAPConnectionManager.ConnectionBrief> = emptyList(),
-    val totalBytesSent: Long = 0,
-    val totalBytesReceived: Long = 0,
+    // ===== ROOT STATUS =====
+    private val _rootStatus = MutableStateFlow(RootChecker.RootStatus())
+    val rootStatus: StateFlow<RootChecker.RootStatus> = _rootStatus.asStateFlow()
 
-    // Discovery
-    val isScanning: Boolean = false,
-    val isProbing: Boolean = false,
-    val discoveredDevices: Set<String> = emptySet(),
-    val pendingProbes: Int = 0,
-    val scanError: String? = null,
+    // ===== NETWORK SCANNER =====
+    private val _networkDevices = MutableStateFlow<List<NetworkScanner.NetworkDevice>>(emptyList())
+    val networkDevices: StateFlow<List<NetworkScanner.NetworkDevice>> = _networkDevices.asStateFlow()
 
-    // Stress - Packet Injection
-    val injectorRunning: Boolean = false,
-    val injectionFramesSent: Long = 0,
-    val injectionErrors: Long = 0,
-    val burstRateHz: Long = 100,
-    val burstDurationMs: Long = 5000L,
+    private val _localIp = MutableStateFlow("0.0.0.0")
+    val localIp: StateFlow<String> = _localIp.asStateFlow()
 
-    // Stress - Simulated Connections
-    val simulatedConnections: Int = 0,
-    val isSimulating: Boolean = false,
-    val targetSimulatedCount: Int = 10,
-    val simulationServerAddress: String = "00:00:00:00:00:00",
-    val simulationResult: String? = null,
+    private val _gateway = MutableStateFlow("0.0.0.0")
+    val gateway: StateFlow<String> = _gateway.asStateFlow()
 
-    // Logs
-    val logs: List<LogEntry> = emptyList(),
-    val logFilter: String = "",
+    private val _scanProgress = MutableStateFlow(Pair(0, 0))
+    val scanProgress: StateFlow<Pair<Int, Int>> = _scanProgress.asStateFlow()
 
-    // Jamming
-    val isJamming: Boolean = false,
-    val sdpQueriesSent: Long = 0,
-    val rfcommConnectionAttempts: Long = 0,
-    val bondingAttempts: Long = 0,
-    val jamElapsedSeconds: Long = 0,
-    val jamTargetAddress: String = "",
-    val discoveredBtDevices: List<String> = emptyList(),
+    private val _scanRunning = MutableStateFlow(false)
+    val scanRunning: StateFlow<Boolean> = _scanRunning.asStateFlow()
 
-    // Update
-    val checkingUpdate: Boolean = false,
-    val updateInfo: ReleaseInfo? = null,
-    val updateError: String? = null,
-    val isDownloading: Boolean = false,
+    // ===== PORT SCANNER =====
+    private val _portResults = MutableStateFlow<List<PortScanner.ScanResult>>(emptyList())
+    val portResults: StateFlow<List<PortScanner.ScanResult>> = _portResults.asStateFlow()
 
-    // Error handling
-    val initError: String? = null,
+    private val _portScanRunning = MutableStateFlow(false)
+    val portScanRunning: StateFlow<Boolean> = _portScanRunning.asStateFlow()
 
-    // Bluetooth state
-    val btState: Int = BluetoothAdapter.STATE_ON,
+    private val _portProgress = MutableStateFlow(Pair(0, 0))
+    val portProgress: StateFlow<Pair<Int, Int>> = _portProgress.asStateFlow()
 
-    // Config
-    val targetServiceUuid: String = "0000FE95-0000-1000-8000-00805F9B34FB",
-    val verificationPsm: Int = 0x0101,
-    val clientConnectAddress: String = "",
-    val clientConnectPsm: Int = 0x0101
-)
+    // ===== WIFI =====
+    private val _wifiNetworks = MutableStateFlow<List<WiFiHack.WiFiNetwork>>(emptyList())
+    val wifiNetworks: StateFlow<List<WiFiHack.WiFiNetwork>> = _wifiNetworks.asStateFlow()
 
-data class LogEntry(
-    val timestamp: Long = System.currentTimeMillis(),
-    val level: LogLevel,
-    val tag: String,
-    val message: String
-)
+    private val _wifiScanRunning = MutableStateFlow(false)
+    val wifiScanRunning: StateFlow<Boolean> = _wifiScanRunning.asStateFlow()
 
-enum class LogLevel { DEBUG, INFO, WARN, ERROR }
+    private val _savedNetworks = MutableStateFlow<List<String>>(emptyList())
+    val savedNetworks: StateFlow<List<String>> = _savedNetworks.asStateFlow()
 
-// ─────────────────────────────────────────────────────────────────
-// VIEWMODEL
-// ─────────────────────────────────────────────────────────────────
-class MainViewModel : ViewModel() {
+    // WiFi Bruteforce
+    private val _bruteForceProgress = MutableStateFlow(Triple(0, 0, ""))
+    val bruteForceProgress: StateFlow<Triple<Int, Int, String>> = _bruteForceProgress.asStateFlow()
 
-    private val _uiState = MutableStateFlow(AppUiState())
-    val uiState: StateFlow<AppUiState> = _uiState.asStateFlow()
+    private val _bruteForceRunning = MutableStateFlow(false)
+    val bruteForceRunning: StateFlow<Boolean> = _bruteForceRunning.asStateFlow()
 
-    // Core components
-    private var l2capManager: L2CAPConnectionManager? = null
-    private var discoveryManager: AggressiveDiscoveryManager? = null
-    private var packetInjector: PacketInjector? = null
-    private var networkSimulator: NetworkEnvironmentSimulator? = null
-    private var jammingEngine: JammingEngine? = null
-    private var appContext: Context? = null
-    private var btStateReceiver: BroadcastReceiver? = null
-    private var autoUpdateManager: AutoUpdateManager? = null
-    private val releaseChecker = GitHubReleaseChecker()
+    private val _bruteForceFound = MutableStateFlow("")
+    val bruteForceFound: StateFlow<String> = _bruteForceFound.asStateFlow()
 
-    // Protocol
-    private val frameBuilder = ProtocolFrameBuilder
-    private val reassemblyBuffer = FrameReassemblyBuffer()
+    // ===== WORDLIST GENERATOR =====
+    private val _wordlist = MutableStateFlow<List<String>>(emptyList())
+    val wordlist: StateFlow<List<String>> = _wordlist.asStateFlow()
 
-    init {
-        // Iniciar monitoreo de estado
+    private val _wordlistSize = MutableStateFlow(0)
+    val wordlistSize: StateFlow<Int> = _wordlistSize.asStateFlow()
+
+    private val _wordlistGenerating = MutableStateFlow(false)
+    val wordlistGenerating: StateFlow<Boolean> = _wordlistGenerating.asStateFlow()
+
+    // ===== EXTRA TOOLS =====
+    private val _dnsResult = MutableStateFlow(ExtraTools.DnsResult())
+    val dnsResult: StateFlow<ExtraTools.DnsResult> = _dnsResult.asStateFlow()
+
+    private val _base64Result = MutableStateFlow("")
+    val base64Result: StateFlow<String> = _base64Result.asStateFlow()
+
+    private val _subnetResult = MutableStateFlow(ExtraTools.SubnetInfo())
+    val subnetResult: StateFlow<ExtraTools.SubnetInfo> = _subnetResult.asStateFlow()
+
+    private val _macVendor = MutableStateFlow("")
+    val macVendor: StateFlow<String> = _macVendor.asStateFlow()
+
+    private val _hashResult = MutableStateFlow(ExtraTools.HashResult())
+    val hashResult: StateFlow<ExtraTools.HashResult> = _hashResult.asStateFlow()
+
+    private val _pingResults = MutableStateFlow<List<Long>>(emptyList())
+    val pingResults: StateFlow<List<Long>> = _pingResults.asStateFlow()
+
+    // ===== LOGS =====
+    private val _logs = MutableStateFlow<List<String>>(emptyList())
+    val logs: StateFlow<List<String>> = _logs.asStateFlow()
+
+    // ===== SYSTEM INFO =====
+    private val _publicIp = MutableStateFlow("...")
+    val publicIp: StateFlow<String> = _publicIp.asStateFlow()
+
+    /** Inicializa la app */
+    fun initApp() {
         viewModelScope.launch {
-            while (isActive) {
-                refreshStats()
-                delay(500)
-            }
-        }
-    }
+            _rootStatus.value = RootChecker.check(context)
+            val (ip, gw) = networkScanner.getNetworkInfo()
+            _localIp.value = ip
+            _gateway.value = gw
 
-    // ────────────────────────────────────────────────────────────
-    // INICIALIZACIÓN (con manejo global de errores)
-    // ────────────────────────────────────────────────────────────
-    fun initialize(bluetoothAdapter: BluetoothAdapter?, context: Context? = null) {
-        try {
-            if (bluetoothAdapter == null) {
-                val msg = "Bluetooth no disponible en este dispositivo"
-                addLog(LogLevel.ERROR, "System", msg)
-                _uiState.update { it.copy(initError = msg) }
-                return
-            }
+            // IP pública
+            _publicIp.value = withContext(Dispatchers.IO) { ExtraTools.getPublicIp() }
 
-            val state = _uiState.value
-
-            appContext = context
-            l2capManager = try {
-                L2CAPConnectionManager(bluetoothAdapter)
-            } catch (e: Exception) {
-                throw RuntimeException("Error al crear L2CAPConnectionManager: ${e.message}", e)
-            }
-
-            discoveryManager = try {
-                AggressiveDiscoveryManager(
-                    bluetoothAdapter = bluetoothAdapter,
-                    verificationManager = l2capManager!!,
-                    targetServiceUUID = ParcelUuid.fromString(state.targetServiceUuid),
-                    verificationPSM = state.verificationPsm
-                )
-            } catch (e: Exception) {
-                throw RuntimeException("Error al crear AggressiveDiscoveryManager: ${e.message}", e)
-            }
-
-            packetInjector = try {
-                PacketInjector()
-            } catch (e: Exception) {
-                throw RuntimeException("Error al crear PacketInjector: ${e.message}", e)
-            }
-
-            networkSimulator = try {
-                NetworkEnvironmentSimulator(state.verificationPsm)
-            } catch (e: Exception) {
-                throw RuntimeException("Error al crear NetworkEnvironmentSimulator: ${e.message}", e)
-            }
-
-            if (context != null) {
-                try {
-                    jammingEngine = JammingEngine(bluetoothAdapter, context)
-                } catch (e: Exception) {
-                    addLog(LogLevel.WARN, "System", "JammingEngine no disponible: ${e.message}")
-                }
+            addLog("🔧 App iniciada")
+            addLog("📡 IP local: $ip | Gateway: $gw")
+            if (_rootStatus.value.isRooted) {
+                addLog("✅ Root detectado: ${_rootStatus.value.details}")
             } else {
-                addLog(LogLevel.WARN, "System", "Context no disponible, JammingEngine desactivado")
+                addLog("ℹ️ Sin root: ${_rootStatus.value.details}")
             }
-
-            registerBtStateReceiver(context)
-            autoUpdateManager = if (context != null) AutoUpdateManager(context) else null
-            setupCallbacks()
-
-            val btOn = bluetoothAdapter.isEnabled
-            addLog(LogLevel.INFO, "System", "Módulos inicializados correctamente")
-            _uiState.update { it.copy(
-                initError = null,
-                bluetoothEnabled = btOn,
-                btState = if (btOn) BluetoothAdapter.STATE_ON else BluetoothAdapter.STATE_OFF
-            )}
-        } catch (e: Exception) {
-            val msg = "Error de inicialización: ${e.message ?: "desconocido"}"
-            addLog(LogLevel.ERROR, "System", msg)
-            _uiState.update { it.copy(initError = msg) }
         }
     }
 
-    /**
-     * Limpia el error de inicialización para reintentar.
-     */
-    fun clearInitError() {
-        _uiState.update { it.copy(initError = null) }
-    }
+    // ===== NETWORK SCANNER =====
+    fun startNetworkScan() {
+        _scanRunning.value = true
+        _networkDevices.value = emptyList()
+        addLog("📡 Escaneando red...")
 
-    private fun setupCallbacks() {
-        // Discovery callbacks
-        discoveryManager?.onSensorDiscovered = { device, result ->
-            addLog(LogLevel.INFO, "Discovery", "Sensor encontrado: ${device.address} (RSSI: ${result.rssi})")
-        }
-        discoveryManager?.onProbeComplete = { device, success ->
-            val level = if (success) LogLevel.INFO else LogLevel.DEBUG
-            val msg = if (success) "✓ Verificado: ${device.address}"
-            else "✗ No responde: ${device.address}"
-            addLog(level, "Probe", msg)
-        }
-        discoveryManager?.onScanError = { msg ->
-            addLog(LogLevel.ERROR, "Scan", "Error: $msg")
-            _uiState.update { it.copy(scanError = msg) }
-        }
-        discoveryManager?.onScanStateChanged = { scanning ->
-            _uiState.update { it.copy(isScanning = scanning) }
-        }
-
-        // Jamming callbacks
-        jammingEngine?.onStateChanged = { active ->
-            if (!active) {
-                _uiState.update { it.copy(isJamming = false) }
-            }
-        }
-        jammingEngine?.onDeviceDiscovered = { address, name ->
-            _uiState.update { state ->
-                val updated = (state.discoveredBtDevices + "$address${if (name != null) " ($name)" else ""}").distinct()
-                state.copy(discoveredBtDevices = updated)
-            }
-        }
-        jammingEngine?.onLog = { msg ->
-            addLog(LogLevel.INFO, "BT Jam", msg)
-        }
-
-        // Los callbacks L2CAP se pasan inline en cada llamada a startServer/connectToServer
-    }
-
-    // ────────────────────────────────────────────────────────────
-    // SERVIDOR L2CAP
-    // ────────────────────────────────────────────────────────────
-    fun startServer(psm: Int) {
-        val manager = l2capManager ?: return
-        manager.listenForIncomingConnections(psm, object : L2CAPConnectionManager.ConnectionCallback {
-            override fun onConnected(socketInfo: L2CAPConnectionManager.SocketInfo) {
-                addLog(LogLevel.INFO, "Server", "Cliente conectado: ${socketInfo.remoteDevice.address}")
-            }
-            override fun onDisconnected(socketInfo: L2CAPConnectionManager.SocketInfo, reason: String) {
-                addLog(LogLevel.WARN, "Server", "Cliente desconectado: ${socketInfo.remoteDevice.address}")
-            }
-            override fun onError(socketInfo: L2CAPConnectionManager.SocketInfo?, error: String) {
-                addLog(LogLevel.ERROR, "Server", "Error: $error")
-            }
-            override fun onDataReceived(socketInfo: L2CAPConnectionManager.SocketInfo, data: ByteArray) {
-                reassemblyBuffer.feed(data)
-                val frames = reassemblyBuffer.drain()
-                frames.forEach { frame ->
-                    addLog(LogLevel.DEBUG, "Server-RX",
-                        "CMD=0x${frame.commandId.toString(16)} Len=${frame.payload.size}")
+        viewModelScope.launch(Dispatchers.IO) {
+            val devices = networkScanner.scanNetwork(
+                subnet = _localIp.value.substringBeforeLast("."),
+                progressCallback = { current, total ->
+                    _scanProgress.value = Pair(current, total)
                 }
-            }
-        })
-        _uiState.update { it.copy(serverListening = true, serverPsm = psm) }
-        addLog(LogLevel.INFO, "Server", "Servidor iniciado en PSM=$psm")
+            )
+            _networkDevices.value = devices
+            _scanRunning.value = false
+            addLog("✅ Escaneo completado: ${devices.size} dispositivos encontrados")
+        }
     }
 
-    fun stopServer() {
-        l2capManager?.stopListening()
-        _uiState.update { it.copy(serverListening = false) }
-        addLog(LogLevel.INFO, "Server", "Servidor detenido")
+    fun stopScan() {
+        _scanRunning.value = false
+        addLog("⏹️ Escaneo detenido")
     }
 
-    // ────────────────────────────────────────────────────────────
-    // CLIENTE L2CAP
-    // ────────────────────────────────────────────────────────────
-    fun connectToServer(address: String, psm: Int) {
-        val manager = l2capManager ?: return
-        addLog(LogLevel.INFO, "Client", "Conectando a $address PSM=$psm...")
-        manager.connectToServer(address, psm, object : L2CAPConnectionManager.ConnectionCallback {
-            override fun onConnected(socketInfo: L2CAPConnectionManager.SocketInfo) {
-                addLog(LogLevel.INFO, "Client", "Conectado a ${socketInfo.remoteDevice.address}")
-            }
-            override fun onDisconnected(socketInfo: L2CAPConnectionManager.SocketInfo, reason: String) {
-                addLog(LogLevel.WARN, "Client", "Desconectado: $reason")
-            }
-            override fun onError(socketInfo: L2CAPConnectionManager.SocketInfo?, error: String) {
-                addLog(LogLevel.ERROR, "Client", "Error: $error")
-            }
-            override fun onDataReceived(socketInfo: L2CAPConnectionManager.SocketInfo, data: ByteArray) {
-                reassemblyBuffer.feed(data)
-                val frames = reassemblyBuffer.drain()
-                frames.forEach { frame ->
-                    addLog(LogLevel.DEBUG, "Client-RX",
-                        "CMD=0x${frame.commandId.toString(16)} Len=${frame.payload.size}")
+    // ===== PORT SCANNER =====
+    fun startPortScan(ip: String, ports: List<Int> = PortScanner.TOP_20) {
+        _portScanRunning.value = true
+        _portResults.value = emptyList()
+        addLog("🔍 Escaneando puertos en $ip...")
+
+        viewModelScope.launch(Dispatchers.IO) {
+            val results = portScanner.scanPorts(
+                ip = ip,
+                ports = ports,
+                timeoutMs = 300,
+                onProgress = { current, total ->
+                    _portProgress.value = Pair(current, total)
                 }
-            }
-        })
+            )
+            val open = results.filter { it.isOpen }
+            _portResults.value = open
+            _portScanRunning.value = false
+            addLog("✅ Escaneo de puertos: ${open.size} abiertos en $ip")
+        }
     }
 
-    fun sendFrame(socketId: Long, commandId: Int, payload: ByteArray = ByteArray(0)) {
-        val frame = frameBuilder.buildDataFrame(commandId, payload)
-        l2capManager?.sendData(socketId, frame)
-        addLog(LogLevel.DEBUG, "TX", "Enviado CMD=0x${commandId.toString(16)} (${frame.size}B)")
+    // ===== WIFI =====
+    fun scanWifi() {
+        _wifiScanRunning.value = true
+        _wifiNetworks.value = emptyList()
+        addLog("📶 Escaneando redes WiFi...")
+
+        wifiHack.startScan()
+
+        viewModelScope.launch(Dispatchers.IO) {
+            delay(2000) // Esperar a que el scan termine
+            val networks = wifiHack.scanNetworks()
+            _wifiNetworks.value = networks
+            _savedNetworks.value = wifiHack.getSavedNetworks()
+            _wifiScanRunning.value = false
+            addLog("✅ Redes WiFi encontradas: ${networks.size}")
+        }
     }
 
-    fun disconnectAll() {
-        l2capManager?.disconnectAll()
-        addLog(LogLevel.INFO, "Client", "Todas las conexiones cerradas")
-    }
-
-    // ────────────────────────────────────────────────────────────
-    // DISCOVERY
-    // ────────────────────────────────────────────────────────────
-    fun startDiscovery() {
-        _uiState.update { it.copy(scanError = null) }
-        discoveryManager?.startAggressiveScan()
-        addLog(LogLevel.INFO, "Discovery", "Escaneo agresivo iniciado")
-    }
-
-    fun stopDiscovery() {
-        discoveryManager?.stopScan()
-        addLog(LogLevel.INFO, "Discovery", "Escaneo detenido")
-    }
-
-    // ────────────────────────────────────────────────────────────
-    // PACKET INJECTOR
-    // ────────────────────────────────────────────────────────────
-    fun startInjection(rateHz: Long, durationMs: Long) {
-        val manager = l2capManager ?: return
-        val connections = manager.getActiveConnections()
-        if (connections.isEmpty()) {
-            addLog(LogLevel.WARN, "Injector", "No hay conexiones activas para inyectar")
+    // ===== WIFI BRUTEFORCE =====
+    fun startBruteForce(ssid: String, passwords: List<String>) {
+        if (passwords.isEmpty()) {
+            addLog("⚠️ No hay contraseñas en la wordlist")
             return
         }
+        _bruteForceRunning.value = true
+        _bruteForceFound.value = ""
+        addLog("🔑 Iniciando fuerza bruta contra '$ssid' (${passwords.size} passwords)")
 
-        val frameData = frameBuilder.buildDataFrame(0x01, ByteArray(16))
-        packetInjector?.startBurst(
-            PacketInjector.BurstConfig(
-                rateHz = rateHz,
-                durationMs = durationMs,
-                frameData = frameData,
-                connections = connections
-            )
-        )
-        _uiState.update { it.copy(injectorRunning = true) }
-        addLog(LogLevel.INFO, "Injector", "Inyección iniciada: $rateHz tps, ${durationMs}ms")
-    }
-
-    fun stopInjection() {
-        packetInjector?.stopBurst()
-        _uiState.update { it.copy(injectorRunning = false) }
-        addLog(LogLevel.INFO, "Injector", "Inyección detenida")
-    }
-
-    // ────────────────────────────────────────────────────────────
-    // SIMULATED CONNECTIONS
-    // ────────────────────────────────────────────────────────────
-    fun scaleSimulatedConnections(targetCount: Int, serverAddress: String) {
-        addLog(LogLevel.INFO, "Simulator", "Escalando a $targetCount conexiones simuladas...")
-        viewModelScope.launch(Dispatchers.IO) {
-            val result = networkSimulator?.scaleConnections(targetCount, serverAddress)
-            _uiState.update {
-                it.copy(
-                    simulatedConnections = result?.establishedCount ?: 0,
-                    isSimulating = false,
-                    simulationResult = if (result?.success == true) "✓ $targetCount conexiones establecidas"
-                    else "✗ Errores: ${result?.errors?.size ?: 0}"
-                )
+        wifiHack.bruteForce(
+            ssid = ssid,
+            passwords = passwords,
+            onProgress = { current, total, pass ->
+                _bruteForceProgress.value = Triple(current, total, pass)
+            },
+            onFound = { password ->
+                _bruteForceFound.value = password
+                addLog("🎉 CONTRASEÑA ENCONTRADA: $password")
+            },
+            onFinish = { success ->
+                _bruteForceRunning.value = false
+                if (!success) addLog("❌ Fuerza bruta completada sin éxito")
             }
-            val msg = if (result?.success == true) "✓ Escalado completado: ${result.establishedCount} conexiones"
-            else "✗ Escalado parcial: ${result?.establishedCount ?: 0} / ${result?.targetCount ?: targetCount}"
-            addLog(if (result?.success == true) LogLevel.INFO else LogLevel.WARN, "Simulator", msg)
+        )
+    }
+
+    // ===== WORDLIST GENERATOR =====
+    fun generateWordlist(info: WordlistGenerator.PersonalInfo) {
+        _wordlistGenerating.value = true
+        addLog("🔑 Generando wordlist...")
+
+        viewModelScope.launch(Dispatchers.Default) {
+            val generator = WordlistGenerator()
+            val words = generator.generateWithMutations(info, 50000)
+            _wordlist.value = words
+            _wordlistSize.value = words.size
+            _wordlistGenerating.value = false
+            addLog("✅ Wordlist generada: ${words.size} palabras")
         }
     }
 
-    fun stopSimulatedConnections() {
-        networkSimulator?.stopAll()
-        _uiState.update { it.copy(simulatedConnections = 0, isSimulating = false) }
-        addLog(LogLevel.INFO, "Simulator", "Todas las conexiones simuladas cerradas")
-    }
-
-    // ────────────────────────────────────────────────────────────
-    // JAMMING
-    // ────────────────────────────────────────────────────────────
-    fun startJamming() {
-        jammingEngine?.start()
-        _uiState.update { it.copy(isJamming = true) }
-        addLog(LogLevel.INFO, "BT Jam", "🔥 Ataque Bluetooth Clásico iniciado (SDP + RFCOMM + Bonding)")
-    }
-
-    fun stopJamming() {
-        jammingEngine?.stop()
-        _uiState.update { it.copy(isJamming = false) }
-        addLog(LogLevel.INFO, "BT Jam", "🛑 Ataque Bluetooth Clásico detenido")
-    }
-
-    fun clearJamDevices() {
-        jammingEngine?.clearDevices()
-        _uiState.update { it.copy(discoveredBtDevices = emptyList()) }
-    }
-
-    // ────────────────────────────────────────────────────────────
-    // UI UPDATES
-    // ────────────────────────────────────────────────────────────
-    fun updateConfig(
-        serviceUuid: String? = null,
-        verificationPsm: Int? = null,
-        targetSimulatedCount: Int? = null,
-        simulationAddress: String? = null,
-        burstRate: Long? = null,
-        burstDuration: Long? = null,
-        clientAddress: String? = null,
-        clientPsm: Int? = null
-    ) {
-        _uiState.update { state ->
-            state.copy(
-                targetServiceUuid = serviceUuid ?: state.targetServiceUuid,
-                verificationPsm = verificationPsm ?: state.verificationPsm,
-                targetSimulatedCount = targetSimulatedCount ?: state.targetSimulatedCount,
-                simulationServerAddress = simulationAddress ?: state.simulationServerAddress,
-                burstRateHz = burstRate ?: state.burstRateHz,
-                burstDurationMs = burstDuration ?: state.burstDurationMs,
-                clientConnectAddress = clientAddress ?: state.clientConnectAddress,
-                clientConnectPsm = clientPsm ?: state.clientConnectPsm
-            )
+    // ===== EXTRA TOOLS =====
+    fun dnsLookup(hostname: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val result = ExtraTools.dnsLookup(hostname)
+            _dnsResult.value = result
+            if (result.ips.isNotEmpty()) {
+                addLog("🌐 DNS $hostname → ${result.ips.joinToString(", ")}")
+            } else {
+                addLog("❌ DNS lookup falló para $hostname")
+            }
         }
+    }
+
+    fun base64Encode(input: String) {
+        _base64Result.value = ExtraTools.base64Encode(input)
+    }
+
+    fun base64Decode(input: String) {
+        _base64Result.value = ExtraTools.base64Decode(input)
+    }
+
+    fun calculateSubnet(ipCidr: String) {
+        _subnetResult.value = ExtraTools.calculateSubnet(ipCidr)
+    }
+
+    fun lookupMac(mac: String) {
+        _macVendor.value = ExtraTools.lookupMacVendor(mac)
+    }
+
+    fun generateHashes(input: String) {
+        _hashResult.value = ExtraTools.generateHashes(input)
+    }
+
+    fun pingHost(ip: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _pingResults.value = emptyList()
+            addLog("📡 Ping a $ip...")
+            val results = networkScanner.ping(ip, 4)
+            _pingResults.value = results
+            val success = results.count { it >= 0 }
+            addLog("✅ Ping: $success/${results.size} respuestas")
+        }
+    }
+
+    // ===== LOGS =====
+    fun addLog(msg: String) {
+        val timestamp = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault())
+            .format(java.util.Date())
+        _logs.value = _logs.value + "[$timestamp] $msg"
     }
 
     fun clearLogs() {
-        _uiState.update { it.copy(logs = emptyList()) }
-    }
-
-    fun setLogFilter(filter: String) {
-        _uiState.update { it.copy(logFilter = filter) }
-    }
-
-    // ────────────────────────────────────────────────────────────
-    // STATS REFRESH
-    // ────────────────────────────────────────────────────────────
-    private fun refreshStats() {
-        val manager = l2capManager ?: return
-        val injector = packetInjector
-        val discovery = discoveryManager
-        val simulator = networkSimulator
-
-        val stats = manager.getStats()
-        val injectorStats = injector?.getStats()
-        val discoveryStats = discovery?.getStats()
-        val simStats = simulator?.getStats()
-        val jamStats = jammingEngine?.getStats()
-
-        _uiState.update { state ->
-            state.copy(
-                serverListening = stats.isListening,
-                serverPsm = stats.serverPsm,
-                serverConnections = stats.activeConnections,
-                clientConnections = stats.connections,
-                totalBytesSent = stats.totalBytesSent,
-                totalBytesReceived = stats.totalBytesReceived,
-                discoveredDevices = discovery?.getDiscoveredDevices() ?: emptySet(),
-                isProbing = discoveryStats?.isProbing ?: false,
-                pendingProbes = discoveryStats?.pendingProbes ?: 0,
-                injectorRunning = injectorStats?.isRunning ?: false,
-                injectionFramesSent = injectorStats?.totalFramesSent ?: 0,
-                injectionErrors = injectorStats?.totalErrors ?: 0,
-                simulatedConnections = simStats?.activeConnections ?: 0,
-                isSimulating = simStats?.isSimulating ?: false,
-
-                // Jam stats
-                isJamming = jamStats?.isActive ?: false,
-                sdpQueriesSent = jamStats?.sdpQueriesSent ?: 0,
-                rfcommConnectionAttempts = jamStats?.rfcommConnectionAttempts ?: 0,
-                bondingAttempts = jamStats?.bondingAttempts ?: 0,
-                jamElapsedSeconds = jamStats?.elapsedSeconds ?: 0,
-                discoveredBtDevices = jammingEngine?.discoveredDevices ?: emptyList()
-            )
-        }
-    }
-
-    // ────────────────────────────────────────────────────────────
-    // BLUETOOTH STATE MONITORING
-    // ────────────────────────────────────────────────────────────
-
-    private fun registerBtStateReceiver(context: Context?) {
-        if (context == null) return
-
-        val filter = IntentFilter(BluetoothAdapter.ACTION_STATE_CHANGED)
-        btStateReceiver = object : BroadcastReceiver() {
-            override fun onReceive(ctx: Context, intent: Intent) {
-                val state = intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR)
-                val previousState = intent.getIntExtra(
-                    BluetoothAdapter.EXTRA_PREVIOUS_STATE, BluetoothAdapter.ERROR
-                )
-
-                when (state) {
-                    BluetoothAdapter.STATE_ON -> {
-                        _uiState.update { it.copy(bluetoothEnabled = true, btState = state) }
-                        addLog(LogLevel.INFO, "BT", "Bluetooth activado")
-                    }
-                    BluetoothAdapter.STATE_TURNING_ON -> {
-                        _uiState.update { it.copy(btState = state) }
-                        addLog(LogLevel.DEBUG, "BT", "Bluetooth encendiéndose...")
-                    }
-                    BluetoothAdapter.STATE_OFF -> {
-                        _uiState.update { it.copy(bluetoothEnabled = false, btState = state) }
-                        addLog(LogLevel.WARN, "BT", "⚠️ Bluetooth desactivado")
-                    }
-                    BluetoothAdapter.STATE_TURNING_OFF -> {
-                        _uiState.update { it.copy(btState = state) }
-                        addLog(LogLevel.WARN, "BT", "Bluetooth apagándose...")
-                    }
-                }
-            }
-        }
-
-        try {
-            context.registerReceiver(btStateReceiver, filter)
-        } catch (e: Exception) {
-            addLog(LogLevel.WARN, "BT", "Error registrando monitor BT: ${e.message}")
-        }
-    }
-
-    private fun unregisterBtStateReceiver() {
-        try {
-            btStateReceiver?.let { appContext?.unregisterReceiver(it) }
-        } catch (_: Exception) { }
-        btStateReceiver = null
-    }
-
-    // ────────────────────────────────────────────────────────────
-    // LOGGING
-    // ────────────────────────────────────────────────────────────
-    private fun addLog(level: LogLevel, tag: String, message: String) {
-        val entry = LogEntry(
-            timestamp = System.currentTimeMillis(),
-            level = level,
-            tag = tag,
-            message = message
-        )
-        _uiState.update { state ->
-            val newLogs = (state.logs + entry).takeLast(500)  // Máximo 500 entradas
-            state.copy(logs = newLogs)
-        }
-    }
-
-    // ────────────────────────────────────────────────────────────
-    // CLEANUP
-    // ────────────────────────────────────────────────────────────
-    // ────────────────────────────────────────────────────────────
-    // UPDATE CHECK
-    // ────────────────────────────────────────────────────────────
-    fun checkForUpdate() {
-        if (_uiState.value.checkingUpdate) return
-
-        _uiState.update { it.copy(
-            checkingUpdate = true,
-            updateInfo = null,
-            updateError = null
-        )}
-
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val currentVersion = BuildConfig.VERSION_NAME
-                val releaseInfo = releaseChecker.checkForUpdate(currentVersion)
-
-                if (releaseInfo == null) {
-                    _uiState.update { it.copy(
-                        checkingUpdate = false,
-                        updateError = "No se pudo conectar con GitHub. " +
-                                "Verifica tu conexión a Internet o revisa más tarde."
-                    )}
-                    addLog(LogLevel.WARN, "Update", "Error al consultar GitHub")
-                    return@launch
-                }
-
-                _uiState.update { it.copy(
-                    checkingUpdate = false,
-                    updateInfo = releaseInfo,
-                    updateError = null
-                )}
-
-                if (releaseInfo.isNewer) {
-                    addLog(LogLevel.INFO, "Update",
-                        "📦 Nueva versión disponible: ${releaseInfo.latestVersion}")
-                } else {
-                    addLog(LogLevel.INFO, "Update",
-                        "✓ Ya tienes la última versión (${currentVersion})")
-                }
-            } catch (e: Exception) {
-                _uiState.update { it.copy(
-                    checkingUpdate = false,
-                    updateError = "Error: ${e.message ?: "desconocido"}"
-                )}
-                addLog(LogLevel.ERROR, "Update", "Error checking update: ${e.message}")
-            }
-        }
-    }
-
-    fun dismissUpdateInfo() {
-        _uiState.update { it.copy(
-            updateInfo = null,
-            updateError = null
-        )}
-    }
-
-    fun downloadAndInstallUpdate() {
-        val info = _uiState.value.updateInfo ?: return
-        if (!info.isNewer) return
-
-        _uiState.update { it.copy(isDownloading = true) }
-        addLog(LogLevel.INFO, "Update", "📥 Descargando ${info.latestVersion}...")
-
-        autoUpdateManager?.downloadAndInstall(info.downloadUrl) {
-            _uiState.update { it.copy(
-                isDownloading = false,
-                updateInfo = null
-            )}
-        }
-    }
-
-    // ────────────────────────────────────────────────────────────
-    // CLEANUP
-    // ────────────────────────────────────────────────────────────
-    override fun onCleared() {
-        super.onCleared()
-        unregisterBtStateReceiver()
-        discoveryManager?.stopScan()
-        packetInjector?.shutdown()
-        networkSimulator?.shutdown()
-        l2capManager?.shutdown()
-        jammingEngine?.shutdown()
-        autoUpdateManager?.cleanup()
+        _logs.value = emptyList()
     }
 }

@@ -1,18 +1,8 @@
-@file:OptIn(ExperimentalMaterial3Api::class)
-
 package com.industrialble
 
-import android.Manifest
-import android.bluetooth.BluetoothAdapter
-import android.bluetooth.BluetoothManager
-import android.content.Intent
-import android.content.pm.PackageManager
-import android.os.Build
 import android.os.Bundle
-import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,8 +11,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -31,845 +25,222 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.industrialble.ui.LogEntry
-import com.industrialble.ui.LogLevel
+import com.industrialble.network.NetworkScanner
+import com.industrialble.network.PortScanner
+import com.industrialble.tools.WordlistGenerator
 import com.industrialble.ui.MainViewModel
 import com.industrialble.ui.theme.IndustrialBLETheme
-import com.industrialble.ui.theme.StatusBusy
-import com.industrialble.ui.theme.StatusError
-import com.industrialble.ui.theme.StatusOffline
-import com.industrialble.ui.theme.StatusOnline
-import com.industrialble.ui.theme.StatusScanning
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 
 class MainActivity : ComponentActivity() {
-
-    private val permissionsLauncher = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { /* permissions handled in UI */ }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        requestPermissions()
-
         setContent {
             IndustrialBLETheme(darkTheme = true) {
-                val viewModel: MainViewModel = viewModel()
-                val uiState by viewModel.uiState.collectAsState()
-                val context = LocalContext.current
-
-                // Inicializar Bluetooth con Context + manejo de errores
-                LaunchedEffect(Unit) {
-                    try {
-                        val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
-                        val adapter = bluetoothManager?.adapter
-                        viewModel.initialize(adapter, context)
-                    } catch (e: Exception) {
-                        viewModel.initialize(null, context)
-                    }
-                }
-
-                // Pantalla de error crítico (bloqueante) o scaffold normal
-                val initError = uiState.initError
-                val isInitializing = uiState.logs.isEmpty() && !uiState.bluetoothEnabled
-                if (initError != null && isInitializing) {
-                    ErrorFullScreen(
-                        error = initError,
-                        onRetry = {
-                            viewModel.clearInitError()
-                            val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
-                            val adapter = bluetoothManager?.adapter
-                            viewModel.initialize(adapter, context)
-                        },
-                        onDismiss = { viewModel.clearInitError() }
-                    )
-                } else {
-                    val onRetry = {
-                        viewModel.clearInitError()
-                        val bluetoothManager = context.getSystemService(BluetoothManager::class.java)
-                        val adapter = bluetoothManager?.adapter
-                        viewModel.initialize(adapter, context)
-                    }
-                    IndustrialBLEScaffold(
-                        viewModel = viewModel,
-                        uiState = uiState,
-                        onDismissError = { viewModel.clearInitError() },
-                        onRetryError = onRetry
-                    )
+                Surface(
+                    modifier = Modifier.fillMaxSize(),
+                    color = MaterialTheme.colorScheme.background
+                ) {
+                    MainApp()
                 }
             }
         }
     }
-
-    private fun requestPermissions() {
-        val permissions = mutableListOf(
-            Manifest.permission.BLUETOOTH,
-            Manifest.permission.BLUETOOTH_ADMIN,
-            Manifest.permission.BLUETOOTH_SCAN,
-            Manifest.permission.BLUETOOTH_CONNECT,
-            Manifest.permission.BLUETOOTH_ADVERTISE,
-        )
-        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.S) {
-            permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
-        }
-        permissionsLauncher.launch(permissions.toTypedArray())
-    }
 }
 
-// ─────────────────────────────────────────────────────────────────
-// SCAFFOLD PRINCIPAL
-// ─────────────────────────────────────────────────────────────────@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun IndustrialBLEScaffold(
-    viewModel: MainViewModel,
-    uiState: com.industrialble.ui.AppUiState,
-    onDismissError: () -> Unit = {},
-    onRetryError: () -> Unit = {}
-) {
+fun MainApp(viewModel: MainViewModel = viewModel()) {
     var selectedTab by remember { mutableIntStateOf(0) }
-    val tabs = listOf("Dashboard", "Discovery", "Stress Test", "Jamming", "Logs")
+    val rootStatus by viewModel.rootStatus.collectAsState()
 
-    // Detectar si BT está apagado
-    val isBtOff = !uiState.bluetoothEnabled
+    LaunchedEffect(Unit) {
+        viewModel.initApp()
+    }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.BluetoothConnected, contentDescription = null,
-                            tint = if (uiState.bluetoothEnabled) StatusOnline else StatusOffline,
-                            modifier = Modifier.size(28.dp))
+                        Icon(Icons.Filled.Security, contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(8.dp))
                         Column {
-                            Text("Industrial BLE", fontWeight = FontWeight.Bold)
-                            Text(
-                                if (uiState.serverListening) "Servidor activo • PSM=${uiState.serverPsm}"
-                                else if (uiState.clientConnections.isNotEmpty()) "Cliente • ${uiState.clientConnections.size} conexiones"
-                                else "Listo",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                            Text("HackDroid", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                            Text("Security Toolkit", fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                     }
                 },
+                actions = {
+                    // Indicador de root
+                    Box(
+                        modifier = Modifier
+                            .padding(end = 8.dp)
+                            .size(12.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (rootStatus.isRooted) Color(0xFF00C853)
+                                else Color(0xFF757575)
+                            )
+                    )
+                    Text(
+                        if (rootStatus.isRooted) "ROOT" else "NO ROOT",
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (rootStatus.isRooted) Color(0xFF00C853) else Color(0xFF757575),
+                        modifier = Modifier.padding(end = 12.dp)
+                    )
+                },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    titleContentColor = MaterialTheme.colorScheme.onSurface
+                    containerColor = MaterialTheme.colorScheme.surface
                 )
             )
         },
         bottomBar = {
             NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 8.dp
+                containerColor = MaterialTheme.colorScheme.surface
             ) {
-                tabs.forEachIndexed { index, title ->
-                    NavigationBarItem(
-                        icon = {
-                            Icon(
-                                when (index) {
-                                    0 -> Icons.Filled.Dashboard
-                                    1 -> Icons.Filled.Radar
-                                    2 -> Icons.Filled.Speed
-                                    3 -> Icons.Filled.BluetoothDisabled
-                                    4 -> Icons.Filled.Terminal
-                                    else -> Icons.Filled.Circle
-                                },
-                                contentDescription = title
-                            )
-                        },
-                        label = { Text(title, fontSize = 10.sp) },
-                        selected = selectedTab == index,
-                        onClick = { selectedTab = index },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = MaterialTheme.colorScheme.primary,
-                            selectedTextColor = MaterialTheme.colorScheme.primary,
-                            indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                        )
-                    )
-                }
+                TabItem(0, "Red", Icons.Filled.DeviceHub, selectedTab) { selectedTab = it }
+                TabItem(1, "WiFi", Icons.Filled.Wifi, selectedTab) { selectedTab = it }
+                TabItem(2, "Wordlist", Icons.Filled.Lock, selectedTab) { selectedTab = it }
+                TabItem(3, "Extra", Icons.Filled.Extension, selectedTab) { selectedTab = it }
+                TabItem(4, "Logs", Icons.Filled.Terminal, selectedTab) { selectedTab = it }
             }
         }
     ) { padding ->
-        Column(modifier = Modifier.padding(padding)) {
-            // ═══ Banner BT apagado ═══
-            if (isBtOff) {
-                BtOffBanner(viewModel = viewModel, modifier = Modifier.fillMaxWidth())
-            }
-
-            // Banner de error no crítico
-            if (uiState.initError != null && !isBtOff) {
-                ErrorBanner(
-                    error = uiState.initError!!,
-                    onDismiss = onDismissError,
-                    onRetry = onRetryError,
-                    modifier = Modifier.fillMaxWidth()
-                )
-            }
-
-            Box(modifier = Modifier.fillMaxSize()) {
-                when (selectedTab) {
-                    0 -> DashboardTab(viewModel, uiState)
-                    1 -> DiscoveryTab(viewModel, uiState)
-                    2 -> StressTestTab(viewModel, uiState)
-                    3 -> JammingTab(viewModel, uiState)
-                    4 -> LogsTab(viewModel, uiState)
-                }
+        Box(Modifier.padding(padding)) {
+            when (selectedTab) {
+                0 -> NetworkTab(viewModel)
+                1 -> WiFiTab(viewModel)
+                2 -> WordlistTab(viewModel)
+                3 -> ExtraTab(viewModel)
+                4 -> LogsTab(viewModel)
             }
         }
     }
 }
 
-// ═════════════════════════════════════════════════════════════════
-// TAB 1: DASHBOARD
-// ═════════════════════════════════════════════════════════════════
 @Composable
-fun DashboardTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
+fun TabItem(index: Int, label: String, icon: ImageVector, selectedTab: Int, onClick: (Int) -> Unit) {
+    NavigationBarItem(
+        selected = selectedTab == index,
+        onClick = { onClick(index) },
+        icon = {
+            Icon(icon, contentDescription = label,
+                tint = if (selectedTab == index) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.onSurfaceVariant)
+        },
+        label = { Text(label, fontSize = 10.sp) },
+        colors = NavigationBarItemDefaults.colors(
+            indicatorColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+        )
+    )
+}
+
+// ==================== NETWORK TAB ====================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun NetworkTab(viewModel: MainViewModel) {
+    val devices by viewModel.networkDevices.collectAsState()
+    val localIp by viewModel.localIp.collectAsState()
+    val gateway by viewModel.gateway.collectAsState()
+    val scanProgress by viewModel.scanProgress.collectAsState()
+    val scanRunning by viewModel.scanRunning.collectAsState()
+    val portResults by viewModel.portResults.collectAsState()
+    val portScanRunning by viewModel.portScanRunning.collectAsState()
+    val pingResults by viewModel.pingResults.collectAsState()
+
+    var targetIp by remember { mutableStateOf("") }
+    var showPortScanner by remember { mutableStateOf(false) }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Server Card
+        // Info de red
         item {
-            ServerControlCard(viewModel, uiState)
-        }
-
-        // Client Card
-        item {
-            ClientControlCard(viewModel, uiState)
-        }
-
-        // Stats Card
-        item {
-            StatsCard(uiState)
-        }
-
-        // Quick Actions
-        item {
-            QuickActionsRow(viewModel, uiState)
-        }
-
-        // Updates
-        item {
-            UpdateCard(viewModel, uiState)
-        }
-
-        item { Spacer(Modifier.height(16.dp)) }
-    }
-}
-
-@Composable
-fun ServerControlCard(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
-    var psmInput by remember { mutableStateOf("257") } // 0x0101
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Cloud, contentDescription = null,
-                    tint = if (uiState.serverListening) StatusOnline else Color.Gray)
-                Spacer(Modifier.width(8.dp))
-                Text("Servidor L2CAP", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.weight(1f))
-                StatusIndicator(active = uiState.serverListening,
-                    label = if (uiState.serverListening) "ACTIVO" else "INACTIVO")
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            if (uiState.serverListening) {
-                InfoRow("PSM", uiState.serverPsm.toString())
-                InfoRow("Conexiones", uiState.serverConnections.toString())
-                Button(
-                    onClick = { viewModel.stopServer() },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                    modifier = Modifier.fillMaxWidth()
-                ) { Icon(Icons.Filled.Stop, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Detener Servidor") }
-            } else {
-                OutlinedTextField(
-                    value = psmInput,
-                    onValueChange = { psmInput = it.filter { c -> c.isDigit() } },
-                    label = { Text("PSM") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true
+            InfoCard(
+                title = "Mi Red",
+                items = listOf(
+                    "IP Local" to localIp,
+                    "Gateway" to gateway,
+                    "Dispositivos" to devices.size.toString()
                 )
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = { viewModel.startServer(psmInput.toIntOrNull() ?: 0x0101) },
-                    modifier = Modifier.fillMaxWidth()
-                ) { Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Iniciar Servidor") }
-            }
-        }
-    }
-}
-
-@Composable
-fun ClientControlCard(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
-    var addressInput by remember { mutableStateOf("") }
-    var psmInput by remember { mutableStateOf("257") }
-
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Devices, contentDescription = null,
-                    tint = if (uiState.clientConnections.isNotEmpty()) StatusOnline else Color.Gray)
-                Spacer(Modifier.width(8.dp))
-                Text("Cliente L2CAP", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.weight(1f))
-                if (uiState.clientConnections.isNotEmpty()) {
-                    Text("${uiState.clientConnections.size} conexiones",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = StatusOnline)
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-
-            OutlinedTextField(
-                value = addressInput,
-                onValueChange = { addressInput = it },
-                label = { Text("Dirección MAC") },
-                placeholder = { Text("00:11:22:33:44:55") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
             )
-            Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = psmInput,
-                    onValueChange = { psmInput = it.filter { c -> c.isDigit() } },
-                    label = { Text("PSM") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-                Button(
-                    onClick = {
-                        val addr = addressInput.trim()
-                        val psm = psmInput.toIntOrNull() ?: 0x0101
-                        if (addr.isNotEmpty()) viewModel.connectToServer(addr, psm)
-                    },
-                    modifier = Modifier.weight(1f),
-                    enabled = addressInput.trim().isNotEmpty()
-                ) { Text("Conectar") }
-            }
-            if (uiState.clientConnections.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                HorizontalDivider()
-                Spacer(Modifier.height(8.dp))
-                Text("Conexiones activas:", style = MaterialTheme.typography.labelMedium)
-                uiState.clientConnections.take(3).forEach { conn ->
-                    Row(modifier = Modifier.padding(vertical = 2.dp)) {
-                        Icon(Icons.Filled.Circle, contentDescription = null,
-                            modifier = Modifier.size(8.dp), tint = StatusOnline)
-                        Spacer(Modifier.width(8.dp))
-                        Text("${conn.deviceAddress} (PSM=${conn.psm})",
-                            style = MaterialTheme.typography.bodySmall,
-                            fontFamily = FontFamily.Monospace)
-                    }
-                }
-                if (uiState.clientConnections.size > 3) {
-                    Text("... y ${uiState.clientConnections.size - 3} más",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { viewModel.disconnectAll() },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) { Text("Desconectar Todo") }
-            }
         }
-    }
-}
 
-@Composable
-fun StatsCard(uiState: com.industrialble.ui.AppUiState) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Estadísticas", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(12.dp))
-            Row(
+        // Botón escanear
+        item {
+            Button(
+                onClick = { viewModel.startNetworkScan() },
+                enabled = !scanRunning,
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
             ) {
-                StatItem("Enviados", formatBytes(uiState.totalBytesSent), Icons.Filled.Upload)
-                StatItem("Recibidos", formatBytes(uiState.totalBytesReceived), Icons.Filled.Download)
-                StatItem("Conectados", "${uiState.serverConnections + uiState.clientConnections.size}", Icons.Filled.Link)
-                StatItem("Descubiertos", "${uiState.discoveredDevices.size}", Icons.Filled.Visibility)
-            }
-        }
-    }
-}
-
-@Composable
-fun StatItem(label: String, value: String, icon: ImageVector) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(icon, contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(24.dp))
-        Spacer(Modifier.height(4.dp))
-        Text(value, style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface)
-        Text(label, style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-fun JamStatItem(label: String, value: String, icon: ImageVector) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(icon, contentDescription = null,
-            tint = MaterialTheme.colorScheme.error,
-            modifier = Modifier.size(22.dp))
-        Spacer(Modifier.height(4.dp))
-        Text(value, style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.error)
-        Text(label, style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-@Composable
-fun QuickActionsRow(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("Acciones Rápidas", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(12.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                ActionButton(
-                    icon = Icons.Filled.Radar,
-                    label = if (uiState.isScanning) "Detener" else "Escanear",
-                    onClick = {
-                        if (uiState.isScanning) viewModel.stopDiscovery()
-                        else viewModel.startDiscovery()
-                    },
-                    color = if (uiState.isScanning) StatusScanning else MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.weight(1f)
-                )
-                ActionButton(
-                    icon = Icons.Filled.Speed,
-                    label = "Inyectar",
-                    onClick = {
-                        viewModel.startInjection(uiState.burstRateHz, uiState.burstDurationMs)
-                    },
-                    color = MaterialTheme.colorScheme.secondary,
-                    modifier = Modifier.weight(1f),
-                    enabled = uiState.clientConnections.isNotEmpty()
-                )
-                ActionButton(
-                    icon = Icons.Filled.ClearAll,
-                    label = "Limpiar Logs",
-                    onClick = { viewModel.clearLogs() },
-                    color = MaterialTheme.colorScheme.tertiary,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-fun ActionButton(
-    icon: ImageVector,
-    label: String,
-    onClick: () -> Unit,
-    color: Color,
-    modifier: Modifier = Modifier,
-    enabled: Boolean = true
-) {
-    OutlinedButton(
-        onClick = onClick,
-        modifier = modifier.height(56.dp),
-        enabled = enabled,
-        colors = ButtonDefaults.outlinedButtonColors(contentColor = color),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.5f))
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(icon, contentDescription = null, modifier = Modifier.size(18.dp))
-            Text(label, fontSize = 10.sp)
-        }
-    }
-}
-
-// ═════════════════════════════════════════════════════════════════
-// TARJETA DE ACTUALIZACIONES
-// ═════════════════════════════════════════════════════════════════
-@Composable
-fun UpdateCard(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
-    val context = LocalContext.current
-    val versionName = try {
-        context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "1.0.0"
-    } catch (_: Exception) { "1.0.0" }
-
-    // ═══ Diálogo: Actualización disponible ═══
-    val updateInfo = uiState.updateInfo
-    if (updateInfo != null && updateInfo.isNewer && !uiState.isDownloading) {
-        AlertDialog(
-            onDismissRequest = { viewModel.dismissUpdateInfo() },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.SystemUpdateAlt, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(8.dp))
-                    Text("📦 Actualización disponible")
-                }
-            },
-            text = {
-                Column {
-                    Text("¡Nueva versión ${updateInfo.latestVersion} disponible!",
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(8.dp))
-                    Text("Tu versión: $versionName",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("Nueva: ${updateInfo.latestVersion}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-                    if (updateInfo.releaseNotes.isNotBlank()) {
-                        Spacer(Modifier.height(12.dp))
-                        Text("Notas de la versión:",
-                            fontWeight = FontWeight.Bold,
-                            style = MaterialTheme.typography.labelLarge)
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            updateInfo.releaseNotes.take(500),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    Spacer(Modifier.height(16.dp))
-                    Text("Se descargará e instalará automáticamente.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            },
-            confirmButton = {
-                Button(onClick = { viewModel.downloadAndInstallUpdate() }) {
-                    Icon(Icons.Filled.Download, contentDescription = null,
-                        modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("Descargar e Instalar")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { viewModel.dismissUpdateInfo() }) {
-                    Text("Ahora no")
-                }
-            }
-        )
-    }
-
-    // ═══ Diálogo: Sin actualizaciones ═══
-    if (updateInfo != null && !updateInfo.isNewer && !uiState.isDownloading) {
-        AlertDialog(
-            onDismissRequest = { viewModel.dismissUpdateInfo() },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.CheckCircle, contentDescription = null,
-                        tint = StatusOnline)
-                    Spacer(Modifier.width(8.dp))
-                    Text("✅ Estás al día")
-                }
-            },
-            text = {
-                Column {
-                    Text("Ya tienes la última versión ($versionName).",
-                        style = MaterialTheme.typography.bodyMedium)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { viewModel.dismissUpdateInfo() }) {
-                    Text("OK")
-                }
-            }
-        )
-    }
-
-    // ═══ Diálogo: Error al buscar ═══
-    val updateError = uiState.updateError
-    if (updateError != null && !uiState.checkingUpdate) {
-        AlertDialog(
-            onDismissRequest = { viewModel.dismissUpdateInfo() },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.ErrorOutline, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Error de conexión")
-                }
-            },
-            text = {
-                Column {
-                    Text("No se pudo verificar actualizaciones.",
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.height(8.dp))
-                    Text(updateError,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(8.dp))
-                    Text("Asegúrate de tener conexión a Internet e inténtalo de nuevo.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { viewModel.dismissUpdateInfo() }) {
-                    Text("Cerrar")
-                }
-            }
-        )
-    }
-
-    // ═══ Card de actualizaciones ═══
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.SystemUpdateAlt, contentDescription = null,
-                    tint = MaterialTheme.colorScheme.tertiary)
-                Spacer(Modifier.width(8.dp))
-                Text("Actualizaciones", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.weight(1f))
-                Text("v$versionName",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Spacer(Modifier.height(12.dp))
-
-            if (uiState.isDownloading) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
+                if (scanRunning) {
                     CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        strokeWidth = 3.dp
+                        modifier = Modifier.size(20.dp),
+                        strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary
                     )
-                    Text("Descargando actualización...",
-                        style = MaterialTheme.typography.bodyMedium)
-                }
-            } else {
-                Button(
-                    onClick = { viewModel.checkForUpdate() },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = !uiState.checkingUpdate,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.tertiary
-                    )
-                ) {
-                    if (uiState.checkingUpdate) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(16.dp),
-                            strokeWidth = 2.dp,
-                            color = MaterialTheme.colorScheme.onTertiary
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text("Verificando...")
-                    } else {
-                        Icon(Icons.Filled.Refresh, contentDescription = null,
-                            modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Buscar actualizaciones")
-                    }
-                }
-            }
-        }
-    }
-}
-
-// ═════════════════════════════════════════════════════════════════
-// TAB 2: DISCOVERY
-// ═════════════════════════════════════════════════════════════════
-@Composable
-fun DiscoveryTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        item {
-            // Scan Controls
-            Card(
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.Radar, contentDescription = null,
-                            tint = if (uiState.isScanning) StatusScanning else Color.Gray)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Escaneo Agresivo", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.weight(1f))
-                        AnimatedVisibility(uiState.isScanning) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                CircularProgressIndicator(
-                                    modifier = Modifier.size(16.dp),
-                                    strokeWidth = 2.dp,
-                                    color = StatusScanning
-                                )
-                                Spacer(Modifier.width(8.dp))
-                                Text("ESCANEANDO", color = StatusScanning,
-                                    style = MaterialTheme.typography.labelSmall)
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(12.dp))
-
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = {
-                                if (uiState.isScanning) viewModel.stopDiscovery()
-                                else viewModel.startDiscovery()
-                            },
-                            modifier = Modifier.weight(1f),
-                            colors = if (uiState.isScanning)
-                                ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                            else ButtonDefaults.buttonColors()
-                        ) {
-                            Icon(
-                                if (uiState.isScanning) Icons.Filled.Stop else Icons.Filled.PlayArrow,
-                                contentDescription = null
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(if (uiState.isScanning) "Detener" else "Iniciar Escaneo")
-                        }
-                    }
-
-                    // ═══ Error de escaneo ═══
-                    if (uiState.scanError != null) {
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(
-                                containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.7f)
-                            ),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(8.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Filled.Warning, contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.error,
-                                    modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text(
-                                    uiState.scanError!!,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                    modifier = Modifier.weight(1f)
-                                )
-                            }
-                        }
-                        Spacer(Modifier.height(8.dp))
-                    }
-
-                    Spacer(Modifier.height(12.dp))
-                    HorizontalDivider()
-                    Spacer(Modifier.height(12.dp))
-
-                    // Stats row
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        DiscoveryStat("Descubiertos", "${uiState.discoveredDevices.size}", Icons.Filled.Devices)
-                        DiscoveryStat("Sondeo", if (uiState.isProbing) "ACTIVO" else "INACTIVO",
-                            if (uiState.isProbing) Icons.Filled.WifiTethering else Icons.Filled.WifiOff)
-                        DiscoveryStat("Pendientes", "${uiState.pendingProbes}", Icons.Filled.HourglassEmpty)
-                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text("Escaneando ${scanProgress.first}/${scanProgress.second}...")
+                } else {
+                    Icon(Icons.Filled.Search, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Escanear Red")
                 }
             }
         }
 
-        // Discovered Devices List
-        item {
-            Text("Dispositivos Descubiertos",
-                style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.padding(vertical = 4.dp))
-        }
-
-        if (uiState.discoveredDevices.isEmpty()) {
+        // Dispositivos encontrados
+        if (devices.isNotEmpty()) {
             item {
-                Card(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(32.dp),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Outlined.Radar, contentDescription = null,
-                                modifier = Modifier.size(48.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                            Spacer(Modifier.height(8.dp))
-                            Text("Inicia el escaneo para descubrir sensores",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
-                        }
-                    }
+                Text(
+                    "📡 Dispositivos (${devices.size})",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            items(devices) { device ->
+                DeviceCard(device) { ip ->
+                    targetIp = ip
+                    showPortScanner = true
                 }
             }
-        } else {
-            items(uiState.discoveredDevices.toList()) { device ->
-                DeviceCard(device)
+        }
+
+        // Port Scanner
+        if (showPortScanner && targetIp.isNotEmpty()) {
+            item {
+                PortScannerSection(
+                    ip = targetIp,
+                    viewModel = viewModel,
+                    onClose = { showPortScanner = false }
+                )
             }
+        }
+
+        // Ping tool
+        item {
+            PingSection(viewModel)
         }
 
         item { Spacer(Modifier.height(16.dp)) }
@@ -877,1122 +248,821 @@ fun DiscoveryTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiSt
 }
 
 @Composable
-fun DiscoveryStat(label: String, value: String, icon: ImageVector) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Icon(icon, contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(20.dp))
-        Spacer(Modifier.height(2.dp))
-        Text(value, style = MaterialTheme.typography.titleSmall,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface)
-        Text(label, style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+fun InfoCard(title: String, items: List<Pair<String, String>>) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text(title, style = MaterialTheme.typography.titleSmall,
+                color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+            items.forEach { (label, value) ->
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 2.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(label, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(value, fontSize = 13.sp, fontWeight = FontWeight.Medium,
+                        fontFamily = FontFamily.Monospace)
+                }
+            }
+        }
     }
 }
 
 @Composable
-fun DeviceCard(address: String) {
+fun DeviceCard(device: NetworkScanner.NetworkDevice, onScanPorts: (String) -> Unit) {
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { /* Expand details */ },
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            .clickable { onScanPorts(device.ip) },
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF00C853))
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(device.ip, fontWeight = FontWeight.Bold,
+                    fontFamily = FontFamily.Monospace)
+            }
+            if (device.mac.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text("MAC: ${device.mac}", fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (device.vendor.isNotEmpty()) {
+                Text("Vendor: ${device.vendor}", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            if (device.hostname.isNotEmpty()) {
+                Text("Host: ${device.hostname}", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+            Spacer(Modifier.height(4.dp))
+            Text("Tocar para escanear puertos →", fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.primary)
+        }
+    }
+}
+
+@Composable
+fun PortScannerSection(ip: String, viewModel: MainViewModel, onClose: () -> Unit) {
+    val portResults by viewModel.portResults.collectAsState()
+    val portScanRunning by viewModel.portScanRunning.collectAsState()
+    val portProgress by viewModel.portProgress.collectAsState()
+
+    var quickScan by remember { mutableStateOf(true) }
+
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Dns, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text("Puertos en $ip", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Filled.Close, contentDescription = "Cerrar")
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+
+            Row {
+                FilterChip(
+                    selected = quickScan,
+                    onClick = { quickScan = true },
+                    label = { Text("Rápido") },
+                    modifier = Modifier.padding(end = 8.dp)
+                )
+                FilterChip(
+                    selected = !quickScan,
+                    onClick = { quickScan = false },
+                    label = { Text("Completo") }
+                )
+            }
+            Spacer(Modifier.height(8.dp))
+
+            Button(
+                onClick = {
+                    val ports = if (quickScan) PortScanner.TOP_20 else PortScanner.TOP_20 + (1..1024).toList()
+                    viewModel.startPortScan(ip, ports)
+                },
+                enabled = !portScanRunning,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                if (portScanRunning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Escaneando ${portProgress.first}/${portProgress.second}...")
+                } else {
+                    Text("Escanear Puertos")
+                }
+            }
+
+            if (portResults.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                portResults.forEach { r ->
+                    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+                        Text("${r.port}", fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold, modifier = Modifier.width(60.dp))
+                        Text(r.serviceName.ifEmpty { "Desconocido" },
+                            modifier = Modifier.weight(1f))
+                        Text("ABIERTO", color = Color(0xFF00C853), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun PingSection(viewModel: MainViewModel) {
+    val pingResults by viewModel.pingResults.collectAsState()
+    var ip by remember { mutableStateOf("8.8.8.8") }
+
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Text("📡 Ping", fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(
+                    value = ip,
+                    onValueChange = { ip = it },
+                    label = { Text("IP") },
+                    modifier = Modifier.weight(1f),
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                    keyboardActions = KeyboardActions(onGo = { viewModel.pingHost(ip) })
+                )
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = { viewModel.pingHost(ip) }) {
+                    Icon(Icons.Filled.Send, contentDescription = null)
+                }
+            }
+            if (pingResults.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Row {
+                    pingResults.forEachIndexed { index, rtt ->
+                        Text(
+                            if (rtt >= 0) "${rtt}ms" else "✗",
+                            color = if (rtt >= 0) Color(0xFF00C853) else Color(0xFFD32F2F),
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(end = 8.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ==================== WIFI TAB ====================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun WiFiTab(viewModel: MainViewModel) {
+    val networks by viewModel.wifiNetworks.collectAsState()
+    val scanRunning by viewModel.wifiScanRunning.collectAsState()
+    val bruteForceProgress by viewModel.bruteForceProgress.collectAsState()
+    val bruteForceRunning by viewModel.bruteForceRunning.collectAsState()
+    val bruteForceFound by viewModel.bruteForceFound.collectAsState()
+    val wordlist by viewModel.wordlist.collectAsState()
+    val savedNetworks by viewModel.savedNetworks.collectAsState()
+
+    var selectedSsid by remember { mutableStateOf("") }
+    var showBruteForce by remember { mutableStateOf(false) }
+
+    LazyColumn(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Botón escanear
+        item {
+            Button(
+                onClick = { viewModel.scanWifi() },
+                enabled = !scanRunning,
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.primary
+                )
+            ) {
+                if (scanRunning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp), strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onPrimary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Escaneando...")
+                } else {
+                    Icon(Icons.Filled.Wifi, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Escanear Redes WiFi")
+                }
+            }
+        }
+
+        // Redes guardadas
+        if (savedNetworks.isNotEmpty()) {
+            item {
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("📂 Redes Guardadas", fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary)
+                        savedNetworks.take(5).forEach { ssid ->
+                            Text(ssid.removeSurrounding("\""), fontSize = 13.sp,
+                                fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Lista de redes
+        if (networks.isNotEmpty()) {
+            item {
+                Text("Redes encontradas (${networks.size})",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.primary)
+            }
+
+            items(networks) { network ->
+                WifiNetworkCard(
+                    network = network,
+                    isSelected = selectedSsid == network.ssid,
+                    onClick = {
+                        selectedSsid = network.ssid
+                        showBruteForce = true
+                    }
+                )
+            }
+        }
+
+        // Brute Force
+        if (showBruteForce && selectedSsid.isNotEmpty()) {
+            item {
+                BruteForceSection(
+                    ssid = selectedSsid,
+                    viewModel = viewModel,
+                    wordlist = wordlist,
+                    bruteForceProgress = bruteForceProgress,
+                    bruteForceRunning = bruteForceRunning,
+                    bruteForceFound = bruteForceFound,
+                    onClose = {
+                        showBruteForce = false
+                        selectedSsid = ""
+                    }
+                )
+            }
+        }
+
+        // Info
+        item {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("ℹ️ Información", fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "La fuerza bruta WiFi funciona sin root usando WifiManager. " +
+                                "Ve a la pestaña Wordlist para generar contraseñas primero.",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+        }
+
+        item { Spacer(Modifier.height(16.dp)) }
+    }
+}
+
+@Composable
+fun WifiNetworkCard(
+    network: com.industrialble.network.WiFiHack.WiFiNetwork,
+    isSelected: Boolean,
+    onClick: () -> Unit
+) {
+    val signalColor = when {
+        network.level >= -50 -> Color(0xFF00C853)
+        network.level >= -70 -> Color(0xFFFFA000)
+        else -> Color(0xFFD32F2F)
+    }
+    val bars = when {
+        network.level >= -50 -> 4
+        network.level >= -60 -> 3
+        network.level >= -70 -> 2
+        else -> 1
+    }
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer
+            else MaterialTheme.colorScheme.surface
+        )
     ) {
         Row(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(Icons.Filled.DeviceHub, contentDescription = null,
-                tint = StatusOnline)
-            Spacer(Modifier.width(12.dp))
-            Column {
-                Text(address, fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium)
-                Text("Sensor industrial verificado",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Spacer(Modifier.weight(1f))
-            Icon(Icons.Filled.CheckCircle, contentDescription = "Verificado",
-                tint = StatusOnline, modifier = Modifier.size(20.dp))
-        }
-    }
-}
-
-// ═════════════════════════════════════════════════════════════════
-// TAB 3: STRESS TEST
-// ═════════════════════════════════════════════════════════════════
-@Composable
-fun StressTestTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // Packet Injection
-        item {
-            PacketInjectionCard(viewModel, uiState)
-        }
-
-        // Simulated Connections
-        item {
-            SimulatedConnectionsCard(viewModel, uiState)
-        }
-
-        // Test Frame Builder
-        item {
-            FrameBuilderCard(viewModel, uiState)
-        }
-
-        item { Spacer(Modifier.height(16.dp)) }
-    }
-}
-
-@Composable
-fun PacketInjectionCard(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
-    var rateInput by remember { mutableStateOf("100") }
-    var durationInput by remember { mutableStateOf("5000") }
-
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Speed, contentDescription = null,
-                    tint = if (uiState.injectorRunning) StatusBusy else Color.Gray)
-                Spacer(Modifier.width(8.dp))
-                Text("Inyector de Paquetes", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.weight(1f))
-                StatusIndicator(active = uiState.injectorRunning,
-                    label = if (uiState.injectorRunning) "INYECTANDO" else "DETENIDO")
-            }
-            Spacer(Modifier.height(12.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = rateInput,
-                    onValueChange = { rateInput = it.filter { c -> c.isDigit() } },
-                    label = { Text("Tasa (tps)") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-                OutlinedTextField(
-                    value = durationInput,
-                    onValueChange = { durationInput = it.filter { c -> c.isDigit() } },
-                    label = { Text("Duración (ms)") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-
-            if (uiState.injectorRunning) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceEvenly) {
-                    Text("Enviados: ${uiState.injectionFramesSent}",
-                        fontFamily = FontFamily.Monospace,
-                        style = MaterialTheme.typography.bodyMedium)
-                    Text("Errores: ${uiState.injectionErrors}",
-                        fontFamily = FontFamily.Monospace,
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = if (uiState.injectionErrors > 0) StatusError else MaterialTheme.colorScheme.onSurface)
-                }
-                Spacer(Modifier.height(8.dp))
-                Button(
-                    onClick = { viewModel.stopInjection() },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) { Icon(Icons.Filled.Stop, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Detener Inyección") }
-            } else {
-                Button(
-                    onClick = {
-                        viewModel.startInjection(
-                            rateInput.toLongOrNull() ?: 100L,
-                            durationInput.toLongOrNull() ?: 5000L
-                        )
-                    },
-                    modifier = Modifier.fillMaxWidth(),
-                    enabled = uiState.clientConnections.isNotEmpty()
-                ) { Icon(Icons.Filled.PlayArrow, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Iniciar Inyección en Ráfaga") }
-                if (uiState.clientConnections.isEmpty()) {
-                    Text("Requiere conexiones activas (tab Dashboard)",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = StatusBusy)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-fun SimulatedConnectionsCard(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
-    var countInput by remember { mutableStateOf("10") }
-    var addressInput by remember { mutableStateOf("") }
-
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Dns, contentDescription = null,
-                    tint = if (uiState.isSimulating) StatusBusy else Color.Gray)
-                Spacer(Modifier.width(8.dp))
-                Text("Simulador de Red", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.weight(1f))
-                Text("${uiState.simulatedConnections} conexiones",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = if (uiState.simulatedConnections > 0) StatusOnline else MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Spacer(Modifier.height(12.dp))
-
-            OutlinedTextField(
-                value = addressInput,
-                onValueChange = { addressInput = it },
-                label = { Text("Dirección MAC del servidor") },
-                placeholder = { Text("00:11:22:33:44:55") },
-                modifier = Modifier.fillMaxWidth(),
-                singleLine = true
-            )
-            Spacer(Modifier.height(4.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = countInput,
-                    onValueChange = { countInput = it.filter { c -> c.isDigit() } },
-                    label = { Text("Conexiones") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true
-                )
-                Button(
-                    onClick = {
-                        viewModel.scaleSimulatedConnections(
-                            countInput.toIntOrNull() ?: 10,
-                            addressInput.trim()
-                        )
-                    },
-                    modifier = Modifier.weight(1f),
-                    enabled = addressInput.trim().isNotEmpty()
-                ) { Text("Escalar") }
-            }
-
-            uiState.simulationResult?.let { result ->
-                Spacer(Modifier.height(8.dp))
-                Text(result,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (result.startsWith("✓")) StatusOnline else StatusError)
-            }
-
-            if (uiState.simulatedConnections > 0) {
-                Spacer(Modifier.height(8.dp))
-                OutlinedButton(
-                    onClick = { viewModel.stopSimulatedConnections() },
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) { Text("Cerrar Conexiones Simuladas") }
-            }
-        }
-    }
-}
-
-@Composable
-fun FrameBuilderCard(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
-    var cmdIdInput by remember { mutableStateOf("01") }
-    var payloadHexInput by remember { mutableStateOf("") }
-    var builtFrameHex by remember { mutableStateOf("") }
-
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(Icons.Filled.Code, contentDescription = null,
-                    tint = MaterialTheme.colorScheme.tertiary)
-                Spacer(Modifier.width(8.dp))
-                Text("Constructor de Tramas", style = MaterialTheme.typography.titleMedium)
-            }
-            Spacer(Modifier.height(12.dp))
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = cmdIdInput,
-                    onValueChange = { cmdIdInput = it.take(2).filter { c -> c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F' } },
-                    label = { Text("Comando (hex)") },
-                    modifier = Modifier.weight(1f),
-                    singleLine = true,
-                    prefix = { Text("0x") }
-                )
-                OutlinedTextField(
-                    value = payloadHexInput,
-                    onValueChange = { payloadHexInput = it.filter { c -> c.isWhitespace() || c in '0'..'9' || c in 'a'..'f' || c in 'A'..'F' } },
-                    label = { Text("Payload (hex)") },
-                    modifier = Modifier.weight(2f),
-                    singleLine = true
-                )
-            }
-            Spacer(Modifier.height(8.dp))
-            Button(
-                onClick = {
-                    val cmd = cmdIdInput.toIntOrNull(16) ?: 1
-                    val payload = try {
-                        if (payloadHexInput.isBlank()) ByteArray(0)
-                        else payloadHexInput.replace(" ", "").chunked(2).map { it.toInt(16).toByte() }.toByteArray()
-                    } catch (_: Exception) { ByteArray(0) }
-                    val frame = com.industrialble.protocol.ProtocolFrameBuilder.buildDataFrame(cmd, payload)
-                    builtFrameHex = com.industrialble.protocol.ProtocolFrameBuilder.bytesToHex(frame)
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) { Icon(Icons.Filled.Build, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Construir Trama") }
-            if (builtFrameHex.isNotEmpty()) {
-                Spacer(Modifier.height(8.dp))
-                Text("Trama construida:",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Text(builtFrameHex,
-                    fontFamily = FontFamily.Monospace,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.primary)
-            }
-        }
-    }
-}
-
-// ═════════════════════════════════════════════════════════════════
-// TAB 4: JAMMING — SATURACIÓN DE RADIO
-// ═════════════════════════════════════════════════════════════════
-@Composable
-fun JammingTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
-    var showGuide by remember { mutableStateOf(false) }
-    // Diálogo de guía para novatos
-    if (showGuide) {
-        AlertDialog(
-            onDismissRequest = { showGuide = false },
-            title = {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Info, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(8.dp))
-                    Text("🎯 Guía Rápida - Bluetooth Clásico")
-                }
-            },
-            text = {
-                Column {
-                    Text("¿Qué hace este botón?",
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(8.dp))
-                    Text("Esta función INTERFIERE con conexiones " +
-                            "de Bluetooth Clásico (BR/EDR) cercanas. " +
-                            "Usa 4 capas de ataque simultáneas:\n\n" +
-                            "1⃣ Discovery Flood: Escanea continuamente " +
-                            "dispositivos BR/EDR cercanos\n" +
-                            "2⃣ SDP Query Flood: Consulta servicios " +
-                            "SDP repetidamente en remotos\n" +
-                            "3⃣ RFCOMM Flood: Intenta conectar por " +
-                            "perfiles reales (A2DP, HSP, HFP...)\n" +
-                            "4⃣ Bonding Attack: Intenta emparejamiento " +
-                            "forzado\n\n" +
-                            "A diferencia de BLE, Bluetooth Clásico " +
-                            "usa 79 canales con salto de frecuencia " +
-                            "(AFH) y es el estándar para audio, " +
-                            "teclados, ratones y manos libres.",
-                        style = MaterialTheme.typography.bodyMedium)
-
-                    Spacer(Modifier.height(16.dp))
-                    Text("🎯 ¿Para qué sirve en pentesting?",
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(4.dp))
-                    Text("Si OTRA persona tiene un parlante conectado " +
-                            "por Bluetooth Clásico a su teléfono, al " +
-                            "activar este ataque desde tu teléfono el " +
-                            "audio del parlante se entrecortará o se " +
-                            "desconectará.\n\n" +
-                            "Los intentos de conexión RFCOMM a perfiles " +
-                            "de audio (A2DP, HSP) saturan el stack BT " +
-                            "del dispositivo remoto, degradando su " +
-                            "capacidad de mantener el flujo de audio.\n\n" +
-                            "Las consultas SDP forzan procesamiento " +
-                            "adicional en el chip BT del objetivo.",
-                        style = MaterialTheme.typography.bodyMedium)
-
-                    Spacer(Modifier.height(16.dp))
-                    Text("⚡ ¿Cómo usarlo?",
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.height(4.dp))
-                    Text("1. Ve al área donde está el dispositivo objetivo\n" +
-                            "2. Asegúrate que tu Bluetooth esté activado\n" +
-                            "3. Toca el botón INICIAR ATAQUE\n" +
-                            "4. Observa si la conexión BT del objetivo se degrada\n" +
-                            "5. Revisa las estadísticas (SDP, RFCOMM, Bonding)\n" +
-                            "6. Toca DETENER ATAQUE para salir")
-
-                    Spacer(Modifier.height(16.dp))
-                    Text("⚠️ ADVERTENCIA LEGAL",
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.error)
-                    Spacer(Modifier.height(4.dp))
-                    Text("Esto NO es un jammer RF físico (haría falta " +
-                            "hardware SDR). Es una saturación del stack " +
-                            "Bluetooth Clásico mediante consultas SDP, " +
-                            "intentos de conexión RFCOMM y emparejamiento.\n\n" +
-                            "Úsalo SOLO en dispositivos que te pertenezcan " +
-                            "o con autorización explícita. El uso no " +
-                            "autorizado puede ser ilegal.",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            },
-            confirmButton = {
-                TextButton(onClick = { showGuide = false }) {
-                    Text("Entendido")
-                }
-            }
-        )
-    }
-
-    LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        // ═══ BOTÓN PRINCIPAL JAM ═══
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(24.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (uiState.isJamming)
-                        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.9f)
-                    else MaterialTheme.colorScheme.surfaceVariant
-                )
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(24.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    // Indicador de estado
+            // Señal
+            Column(horizontalAlignment = Alignment.CenterHorizontally,
+                modifier = Modifier.width(40.dp)) {
+                repeat(bars) {
                     Box(
                         modifier = Modifier
-                            .size(12.dp)
-                            .clip(CircleShape)
-                            .background(
-                                if (uiState.isJamming) MaterialTheme.colorScheme.error
-                                else StatusOffline
-                            )
+                            .width(4.dp)
+                            .height(4.dp + it * 4.dp)
+                            .clip(RoundedCornerShape(2.dp))
+                            .background(signalColor)
                     )
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        if (uiState.isJamming) "🔥 ATACANDO BT CLÁSICO" else "MODO REPOSO",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (uiState.isJamming) MaterialTheme.colorScheme.error
-                        else MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontWeight = FontWeight.Bold
-                    )
-                    Spacer(Modifier.height(16.dp))
-
-                    // ═══ BOTÓN GRANDE JAM ═══
-                    Button(
-                        onClick = {
-                            if (uiState.isJamming) {
-                                viewModel.stopJamming()
-                            } else {
-                                viewModel.startJamming()
-                            }
-                        },
-                        modifier = Modifier
-                            .size(180.dp)
-                            .clip(CircleShape),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (uiState.isJamming)
-                                MaterialTheme.colorScheme.error
-                            else MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onError
-                        ),
-                        elevation = ButtonDefaults.buttonElevation(
-                            defaultElevation = 8.dp,
-                            pressedElevation = 16.dp
-                        )
-                    ) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(
-                                if (uiState.isJamming) Icons.Filled.Stop
-                                else Icons.Filled.Bluetooth,
-                                contentDescription = null,
-                                modifier = Modifier.size(48.dp)
-                            )
-                            Spacer(Modifier.height(8.dp))
-                            Text(
-                                if (uiState.isJamming) "DETENER" else "INICIAR",
-                                style = MaterialTheme.typography.titleLarge,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                if (uiState.isJamming) "ATAQUE" else "ATAQUE",
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Black
-                            )
-                        }
-                    }
-
-                    // Botón de guía
-                    OutlinedButton(
-                        onClick = { showGuide = true },
-                        modifier = Modifier.fillMaxWidth(),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f))
-                    ) {
-                        Icon(Icons.Filled.Help, contentDescription = null,
-                            modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("📖 Guía para novatos")
-                    }
                 }
             }
-        }
 
-        // ═══ ESTADÍSTICAS ═══
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+            Column(Modifier.weight(1f)) {
+                Text(
+                    if (network.ssid.isNotEmpty()) network.ssid else "<Red Oculta>",
+                    fontWeight = FontWeight.Bold, fontSize = 14.sp
                 )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text("📊 Estadísticas del Flooding",
-                        style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(12.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceEvenly
-                    ) {
-                        JamStatItem(
-                            "Tiempo",
-                            "${uiState.jamElapsedSeconds}s",
-                            Icons.Filled.Timer
-                        )
-                        JamStatItem(
-                            "Consultas SDP",
-                            "${uiState.sdpQueriesSent}",
-                            Icons.Filled.Search
-                        )
-                        JamStatItem(
-                            "RFCOMM",
-                            "${uiState.rfcommConnectionAttempts}",
-                            Icons.Filled.Link
-                        )
-                        JamStatItem(
-                            "Bonding",
-                            "${uiState.bondingAttempts}",
-                            Icons.Filled.Lock
-                        )
-                    }
-
-                    if (uiState.isJamming) {
-                        Spacer(Modifier.height(12.dp))
-                        LinearProgressIndicator(
-                            modifier = Modifier.fillMaxWidth(),
-                            color = MaterialTheme.colorScheme.error
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        Text("🔥 Ataque multi-capa BT Clásico: Discovery Flood + SDP Query Flood + RFCOMM Connections + Bonding Attack",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            fontWeight = FontWeight.Medium)
-                    }
-                }
-            }
-        }
-
-        // ═══ DISPOSITIVOS DESCUBIERTOS ═══
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                Text(
+                    "${network.encryption} · Ch ${network.channel} · ${network.frequency}MHz",
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Filled.DevicesOther, contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Dispositivos Bluetooth Cercanos",
-                            style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.weight(1f))
-                        if (uiState.discoveredBtDevices.isNotEmpty()) {
-                            IconButton(
-                                onClick = { viewModel.clearJamDevices() },
-                                modifier = Modifier.size(24.dp)
-                            ) {
-                                Icon(Icons.Filled.Clear, contentDescription = "Limpiar",
-                                    modifier = Modifier.size(16.dp))
-                            }
-                        }
-                    }
-                    Spacer(Modifier.height(8.dp))
+            }
 
-                    if (uiState.discoveredBtDevices.isEmpty()) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 24.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Icon(Icons.Outlined.BluetoothSearching,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(32.dp),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                                Spacer(Modifier.height(4.dp))
-                                Text("Activa FLOOD para descubrir dispositivos",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
-                            }
-                        }
-                    } else {
-                        uiState.discoveredBtDevices.forEach { device ->
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(Icons.Filled.Bluetooth, contentDescription = null,
-                                    modifier = Modifier.size(16.dp),
-                                    tint = StatusOnline)
-                                Spacer(Modifier.width(8.dp))
-                                Text(device,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    fontFamily = FontFamily.Monospace,
-                                    modifier = Modifier.weight(1f))
-                            }
-                            HorizontalDivider()
-                        }
-                    }
-                }
-            }
-        }            // ═══ ADVERTENCIA ═══
-        item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
-                )
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.Top
-                ) {
-                    Icon(Icons.Filled.Warning, contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(20.dp))
-                    Spacer(Modifier.width(12.dp))
-                    Column {
-                        Text("⚠️ Solo para pentesting autorizado",
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.labelLarge)
-                        Spacer(Modifier.height(4.dp))
-                        Text("Esta función INTERFIERE con conexiones " +
-                                "Bluetooth Clásico (BR/EDR) cercanas. " +
-                                "Usa consultas SDP, intentos de conexión " +
-                                "RFCOMM a perfiles reales (A2DP, HSP, " +
-                                "HFP, SPP, etc.) e intentos de " +
-                                "emparejamiento.\n\n" +
-                                "EFECTO: El parlante de OTRA persona puede " +
-                                "experimentar cortes de audio, mayor " +
-                                "latencia o desconexión.\n\n" +
-                                "DIFERENCIA CON BLE: Bluetooth Clásico " +
-                                "(BR/EDR) es el estándar que usan " +
-                                "parlantes, auriculares, manos libres " +
-                                "de auto, teclados y ratones. No los " +
-                                "canales BLE 37/38/39.\n\n" +
-                                "Usa solo en dispositivos que te " +
-                                "pertenezcan o con autorización explícita.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                }
-            }
+            Text("${network.level}dBm", fontSize = 11.sp,
+                color = signalColor, fontFamily = FontFamily.Monospace)
         }
-
-        item { Spacer(Modifier.height(16.dp)) }
     }
 }
 
-// ═════════════════════════════════════════════════════════════════
-// TAB 5: LOGS
-// ═════════════════════════════════════════════════════════════════
 @Composable
-fun LogsTab(viewModel: MainViewModel, uiState: com.industrialble.ui.AppUiState) {
-    val listState = rememberLazyListState()
-    var filterInput by remember { mutableStateOf("") }
-    var logLevelFilter by remember { mutableStateOf<LogLevel?>(null) }
+fun BruteForceSection(
+    ssid: String,
+    viewModel: MainViewModel,
+    wordlist: List<String>,
+    bruteForceProgress: Triple<Int, Int, String>,
+    bruteForceRunning: Boolean,
+    bruteForceFound: String,
+    onClose: () -> Unit
+) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Lock, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.error)
+                Spacer(Modifier.width(8.dp))
+                Text("Fuerza Bruta: $ssid", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onClose) {
+                    Icon(Icons.Filled.Close, contentDescription = null)
+                }
+            }
+            Spacer(Modifier.height(8.dp))
 
-    val filteredLogs = uiState.logs.filter { log ->
-        (logLevelFilter == null || log.level == logLevelFilter) &&
-                (filterInput.isBlank() || log.message.contains(filterInput, ignoreCase = true) ||
-                        log.tag.contains(filterInput, ignoreCase = true))
-    }
+            Text("Wordlist: ${wordlist.size} passwords", fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-    // Auto scroll
-    LaunchedEffect(filteredLogs.size) {
-        if (filteredLogs.isNotEmpty()) {
-            listState.animateScrollToItem(filteredLogs.size - 1)
+            if (wordlist.isEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text("⚠️ Genera una wordlist primero en la pestaña Wordlist",
+                    fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            Button(
+                onClick = { viewModel.startBruteForce(ssid, wordlist) },
+                enabled = !bruteForceRunning && wordlist.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = MaterialTheme.colorScheme.error
+                )
+            ) {
+                if (bruteForceRunning) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(16.dp), strokeWidth = 2.dp,
+                        color = MaterialTheme.colorScheme.onError)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Probando ${bruteForceProgress.first}/${bruteForceProgress.second}...")
+                } else {
+                    Icon(Icons.Filled.FlashOn, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Iniciar Ataque")
+                }
+            }
+
+            if (bruteForceRunning) {
+                Spacer(Modifier.height(4.dp))
+                Text("Probando: ${bruteForceProgress.third}", fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                LinearProgressIndicator(
+                    progress = {
+                        if (bruteForceProgress.second > 0)
+                            bruteForceProgress.first.toFloat() / bruteForceProgress.second.toFloat()
+                        else 0f
+                    },
+                    modifier = Modifier.fillMaxWidth().height(4.dp)
+                )
+            }
+
+            if (bruteForceFound.isNotEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                Card(
+                    colors = CardDefaults.cardColors(
+                        containerColor = Color(0xFF1B5E20)
+                    )
+                ) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text("🎉 CONTRASEÑA ENCONTRADA!", fontWeight = FontWeight.Bold,
+                            color = Color(0xFF69F0AE))
+                        Text(bruteForceFound, fontFamily = FontFamily.Monospace,
+                            fontSize = 16.sp, fontWeight = FontWeight.Bold,
+                            color = Color.White)
+                    }
+                }
+            }
         }
     }
+}
+
+// ==================== WORDLIST TAB ====================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun WordlistTab(viewModel: MainViewModel) {
+    val wordlistSize by viewModel.wordlistSize.collectAsState()
+    val wordlist by viewModel.wordlist.collectAsState()
+    val generating by viewModel.wordlistGenerating.collectAsState()
+    val focusManager = LocalFocusManager.current
+
+    var nombres by remember { mutableStateOf("") }
+    var apellidos by remember { mutableStateOf("") }
+    var apodo by remember { mutableStateOf("") }
+    var fecha by remember { mutableStateOf("") }
+    var telefono by remember { mutableStateOf("") }
+    var empresa by remember { mutableStateOf("") }
+    var mascota by remember { mutableStateOf("") }
+    var ciudad by remember { mutableStateOf("") }
+    var palabrasAdicionales by remember { mutableStateOf("") }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background)
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // Filter bar
-        Surface(
+        Text("🔑 Generador de Wordlist",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary)
+        Text("Ingresa información de la víctima para generar contraseñas probables",
+            fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+        Spacer(Modifier.height(4.dp))
+
+        OutlinedTextField(value = nombres, onValueChange = { nombres = it },
+            label = { Text("Nombres") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = apellidos, onValueChange = { apellidos = it },
+            label = { Text("Apellidos") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = apodo, onValueChange = { apodo = it },
+            label = { Text("Apodo") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = fecha, onValueChange = { fecha = it },
+            label = { Text("Fecha de Nacimiento (DD/MM/AAAA)") }, singleLine = true,
             modifier = Modifier.fillMaxWidth(),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            tonalElevation = 4.dp
-        ) {
-            Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                OutlinedTextField(
-                    value = filterInput,
-                    onValueChange = { filterInput = it },
-                    label = { Text("Filtrar logs...") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    leadingIcon = { Icon(Icons.Filled.Search, contentDescription = null) },
-                    trailingIcon = {
-                        if (filterInput.isNotEmpty()) {
-                            IconButton(onClick = { filterInput = "" }) {
-                                Icon(Icons.Filled.Clear, contentDescription = "Limpiar")
-                            }
-                        }
-                    }
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number))
+        OutlinedTextField(value = telefono, onValueChange = { telefono = it },
+            label = { Text("Teléfono") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone))
+        OutlinedTextField(value = empresa, onValueChange = { empresa = it },
+            label = { Text("Empresa/ Trabajo") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = mascota, onValueChange = { mascota = it },
+            label = { Text("Mascota") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = ciudad, onValueChange = { ciudad = it },
+            label = { Text("Ciudad") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(value = palabrasAdicionales, onValueChange = { palabrasAdicionales = it },
+            label = { Text("Palabras extra (separadas por coma)") }, singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { focusManager.clearFocus() }))
+
+        Spacer(Modifier.height(8.dp))
+
+        Button(
+            onClick = {
+                focusManager.clearFocus()
+                val info = WordlistGenerator.PersonalInfo(
+                    nombres = nombres, apellidos = apellidos, apodo = apodo,
+                    fechaNacimiento = fecha, telefono = telefono, empresa = empresa,
+                    mascota = mascota, ciudad = ciudad,
+                    palabrasClave = palabrasAdicionales.split(",").map { it.trim() }.filter { it.isNotEmpty() }
                 )
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    LogLevel.entries.forEach { level ->
-                        FilterChip(
-                            selected = logLevelFilter == level,
-                            onClick = {
-                                logLevelFilter = if (logLevelFilter == level) null else level
-                            },
-                            label = { Text(level.name, fontSize = 10.sp) },
-                            colors = FilterChipDefaults.filterChipColors(
-                                selectedContainerColor = chipColor(level).copy(alpha = 0.2f),
-                                selectedLabelColor = chipColor(level)
-                            )
-                        )
-                    }
-                    Spacer(Modifier.weight(1f))
-                    TextButton(onClick = { viewModel.clearLogs() }) {
-                        Icon(Icons.Filled.DeleteSweep, contentDescription = null,
-                            modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Limpiar", fontSize = 11.sp)
+                viewModel.generateWordlist(info)
+            },
+            enabled = !generating,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            if (generating) {
+                CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+                Text("Generando...")
+            } else {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Generar Wordlist")
+            }
+        }
+
+        if (wordlistSize > 0) {
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant
+                )
+            ) {
+                Column(Modifier.padding(12.dp)) {
+                    Text("✅ Wordlist generada: $wordlistSize contraseñas",
+                        fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                    Text("Usa en la pestaña WiFi para fuerza bruta",
+                        fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(4.dp))
+                    Text("Primeras 10:", fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    wordlist.take(10).forEach { pw ->
+                        Text(pw, fontSize = 11.sp, fontFamily = FontFamily.Monospace,
+                            color = MaterialTheme.colorScheme.onSurface)
                     }
                 }
             }
         }
 
-        // Logs list
-        if (filteredLogs.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(32.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Outlined.Terminal, contentDescription = null,
-                        modifier = Modifier.size(48.dp),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
-                    Spacer(Modifier.height(8.dp))
-                    Text(if (uiState.logs.isEmpty()) "No hay logs aún" else "Ningún log coincide con el filtro",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
-                }
-            }
-        } else {
-            LazyColumn(
-                state = listState,
-                modifier = Modifier.fillMaxSize()
-            ) {
-                items(filteredLogs.reversed(), key = { "${it.timestamp}_${it.message}" }) { log ->
-                    LogEntryRow(log)
-                }
-            }
-        }
+        Spacer(Modifier.height(16.dp))
     }
 }
 
+// ==================== EXTRA TAB ====================
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun LogEntryRow(entry: LogEntry) {
-    val dateFormat = remember { SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()) }
-    val color = chipColor(entry.level)
+fun ExtraTab(viewModel: MainViewModel) {
+    val dnsResult by viewModel.dnsResult.collectAsState()
+    val base64Result by viewModel.base64Result.collectAsState()
+    val subnetResult by viewModel.subnetResult.collectAsState()
+    val macVendor by viewModel.macVendor.collectAsState()
+    val hashResult by viewModel.hashResult.collectAsState()
+    val publicIp by viewModel.publicIp.collectAsState()
 
-    Surface(
-        modifier = Modifier.fillMaxWidth(),
-        color = Color.Transparent
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 3.dp),
-            verticalAlignment = Alignment.Top
-        ) {
-            Text(
-                dateFormat.format(Date(entry.timestamp)),
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f),
-                modifier = Modifier.width(72.dp)
-            )
-            Text(
-                entry.level.name,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Bold,
-                color = color,
-                modifier = Modifier.width(48.dp)
-            )
-            Text(
-                entry.tag,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-                color = color.copy(alpha = 0.8f),
-                modifier = Modifier.width(72.dp),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
-            )
-            Text(
-                entry.message,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 10.sp,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis,
-                modifier = Modifier.weight(1f)
-            )
-        }
-    }
-}
+    var dnsInput by remember { mutableStateOf("") }
+    var b64Input by remember { mutableStateOf("") }
+    var subnetInput by remember { mutableStateOf("192.168.1.0/24") }
+    var macInput by remember { mutableStateOf("") }
+    var hashInput by remember { mutableStateOf("") }
+    var b64Mode by remember { mutableStateOf(true) }
 
-@Composable
-fun chipColor(level: LogLevel): Color = when (level) {
-    LogLevel.DEBUG -> MaterialTheme.colorScheme.primary
-    LogLevel.INFO -> StatusOnline
-    LogLevel.WARN -> StatusBusy
-    LogLevel.ERROR -> StatusError
-}
-
-// ═════════════════════════════════════════════════════════════════
-// COMPONENTES COMPARTIDOS
-// ═════════════════════════════════════════════════════════════════
-@Composable
-fun StatusIndicator(active: Boolean, label: String) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Box(
-            modifier = Modifier
-                .size(8.dp)
-                .clip(CircleShape)
-                .background(if (active) StatusOnline else StatusOffline)
-        )
-        Spacer(Modifier.width(4.dp))
-        Text(label, style = MaterialTheme.typography.labelSmall,
-            color = if (active) StatusOnline else StatusOffline,
-            fontWeight = FontWeight.Bold)
-    }
-}
-
-@Composable
-fun InfoRow(label: String, value: String) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 2.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Text(label, style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(value, style = MaterialTheme.typography.bodySmall,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Medium)
-    }
-}
-
-fun formatBytes(bytes: Long): String {
-    return when {
-        bytes < 1024 -> "$bytes B"
-        bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-        else -> "${"%.1f".format(bytes.toDouble() / (1024 * 1024))} MB"
-    }
-}
-
-@Composable
-fun HorizontalDivider() {
-    androidx.compose.material3.HorizontalDivider(
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f),
-        thickness = 0.5.dp
-    )
-}
-
-// ═════════════════════════════════════════════════════════════════
-// BANNER BT APAGADO
-// ═════════════════════════════════════════════════════════════════
-@Composable
-fun BtOffBanner(viewModel: MainViewModel, modifier: Modifier = Modifier) {
-    Card(
-        modifier = modifier.padding(horizontal = 8.dp, vertical = 2.dp),
-        shape = RoundedCornerShape(8.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(
-                Icons.Filled.BluetoothDisabled,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(Modifier.width(10.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "Bluetooth apagado",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onErrorContainer
-                )
-                Text(
-                    "Activa Bluetooth para usar la app",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer.copy(alpha = 0.8f)
-                )
-            }
-            Spacer(Modifier.width(8.dp))
-            // Botón para abrir Ajustes Bluetooth
-            val context = LocalContext.current
-            OutlinedButton(
-                onClick = {
-                    val intent = Intent(Settings.ACTION_BLUETOOTH_SETTINGS)
-                    try {
-                        context.startActivity(intent)
-                    } catch (_: Exception) {
-                        // Fallback: abrir ajustes generales
-                        context.startActivity(Intent(Settings.ACTION_SETTINGS))
-                    }
-                },
-                colors = ButtonDefaults.outlinedButtonColors(
-                    contentColor = MaterialTheme.colorScheme.error
-                ),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-            ) {
-                Text("Activar", fontSize = 12.sp)
-            }
-        }
-    }
-}
-
-// ═════════════════════════════════════════════════════════════════
-// COMPONENTES DE ERROR GLOBAL
-// ═════════════════════════════════════════════════════════════════
-
-/**
- * Banner de error no crítico que aparece en la parte superior del scaffold.
- * No bloquea la interacción.
- */
-@Composable
-fun ErrorBanner(
-    error: String,
-    onDismiss: () -> Unit,
-    onRetry: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.9f)
-        ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.Top
-        ) {
-            Icon(
-                Icons.Filled.Warning,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    "⚠️ Error",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.error
-                )
-                Spacer(Modifier.height(2.dp))
-                Text(
-                    error,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onErrorContainer,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis
-                )
-                Spacer(Modifier.height(8.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    TextButton(
-                        onClick = onRetry,
-                        colors = ButtonDefaults.textButtonColors(
-                            contentColor = MaterialTheme.colorScheme.error
-                        )
-                    ) {
-                        Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(4.dp))
-                        Text("Reintentar", fontSize = 12.sp)
-                    }
-                    TextButton(onClick = onDismiss) {
-                        Text("Ignorar", fontSize = 12.sp)
-                    }
-                }
-            }
-            IconButton(
-                onClick = onDismiss,
-                modifier = Modifier.size(24.dp)
-            ) {
-                Icon(Icons.Filled.Close, contentDescription = "Cerrar",
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(16.dp))
-            }
-        }
-    }
-}
-
-/**
- * Pantalla completa de error crítico.
- * Bloquea toda la UI hasta que el usuario toque Reintentar.
- */
-@Composable
-fun ErrorFullScreen(
-    error: String,
-    onRetry: () -> Unit,
-    onDismiss: () -> Unit
-) {
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentAlignment = Alignment.Center
+            .padding(16.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        Text("🧰 Herramientas Extra",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.primary)
+
+        // IP Pública
+        Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+            Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Filled.Language, contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text("IP Pública:", fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.weight(1f))
+                Text(publicIp, fontWeight = FontWeight.Bold, fontFamily = FontFamily.Monospace)
+            }
+        }
+
+        // DNS Lookup
+        ToolCard("🌐 DNS Lookup") {
+            OutlinedTextField(value = dnsInput, onValueChange = { dnsInput = it },
+                label = { Text("Hostname/IP") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go),
+                keyboardActions = KeyboardActions(onGo = { viewModel.dnsLookup(dnsInput) }))
+            Spacer(Modifier.height(4.dp))
+            Button(onClick = { viewModel.dnsLookup(dnsInput) },
+                modifier = Modifier.fillMaxWidth()) {
+                Text("Resolver DNS")
+            }
+            if (dnsResult.ips.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                dnsResult.ips.forEach { ip ->
+                    Text("→ $ip", fontFamily = FontFamily.Monospace, fontSize = 13.sp)
+                }
+            }
+        }
+
+        // MAC Vendor
+        ToolCard("🔍 MAC Vendor") {
+            OutlinedTextField(value = macInput, onValueChange = { macInput = it },
+                label = { Text("MAC (ej: 00:11:22:33:44:55)") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(4.dp))
+            Button(onClick = { viewModel.lookupMac(macInput) },
+                modifier = Modifier.fillMaxWidth()) {
+                Text("Buscar Vendor")
+            }
+            if (macVendor.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text("Vendor: $macVendor", fontWeight = FontWeight.Bold)
+            }
+        }
+
+        // Subnet Calculator
+        ToolCard("📐 Calculadora de Subred") {
+            OutlinedTextField(value = subnetInput, onValueChange = { subnetInput = it },
+                label = { Text("IP/CIDR (ej: 192.168.1.0/24)") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(4.dp))
+            Button(onClick = { viewModel.calculateSubnet(subnetInput) },
+                modifier = Modifier.fillMaxWidth()) {
+                Text("Calcular")
+            }
+            if (subnetResult.networkAddress.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Column {
+                    listOf(
+                        "Red" to subnetResult.networkAddress,
+                        "Broadcast" to subnetResult.broadcastAddress,
+                        "Hosts" to subnetResult.totalHosts.toString(),
+                        "Máscara" to subnetResult.netmask,
+                        "Rango" to "${subnetResult.firstHost} - ${subnetResult.lastHost}",
+                        "Tipo" to if (subnetResult.isPrivate) "Privada" else "Pública"
+                    ).forEach { (k, v) ->
+                        Row(Modifier.fillMaxWidth()) {
+                            Text("$k: ", fontSize = 12.sp, modifier = Modifier.width(80.dp),
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(v, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+                }
+            }
+        }
+
+        // Base64
+        ToolCard("🔐 Base64") {
+            Row {
+                FilterChip(selected = b64Mode, onClick = { b64Mode = true },
+                    label = { Text("Encode") }, modifier = Modifier.padding(end = 8.dp))
+                FilterChip(selected = !b64Mode, onClick = { b64Mode = false },
+                    label = { Text("Decode") })
+            }
+            Spacer(Modifier.height(4.dp))
+            OutlinedTextField(value = b64Input, onValueChange = { b64Input = it },
+                label = { Text(if (b64Mode) "Texto a codificar" else "Base64 a decodificar") },
+                singleLine = true, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(4.dp))
+            Button(onClick = {
+                if (b64Mode) viewModel.base64Encode(b64Input)
+                else viewModel.base64Decode(b64Input)
+            }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (b64Mode) "Codificar" else "Decodificar")
+            }
+            if (base64Result.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text(base64Result, fontFamily = FontFamily.Monospace, fontSize = 12.sp,
+                    maxLines = 3, overflow = TextOverflow.Ellipsis)
+            }
+        }
+
+        // Hashes
+        ToolCard("🔒 Generar Hashes") {
+            OutlinedTextField(value = hashInput, onValueChange = { hashInput = it },
+                label = { Text("Texto a hashear") }, singleLine = true,
+                modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(4.dp))
+            Button(onClick = { viewModel.generateHashes(hashInput) },
+                modifier = Modifier.fillMaxWidth()) {
+                Text("Generar Hashes")
+            }
+            if (hashResult.md5.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                Text("MD5:    ${hashResult.md5}", fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                Text("SHA-1:  ${hashResult.sha1}", fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                Text("SHA256: ${hashResult.sha256}", fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+            }
+        }
+
+        Spacer(Modifier.height(16.dp))
+    }
+}
+
+@Composable
+fun ToolCard(title: String, content: @Composable ColumnScope.() -> Unit) {
+    Card(
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant
+        )
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Text(title, fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.height(8.dp))
+            content()
+        }
+    }
+}
+
+// ==================== LOGS TAB ====================
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun LogsTab(viewModel: MainViewModel) {
+    val logs by viewModel.logs.collectAsState()
+    val listState = rememberLazyListState()
+
+    LaunchedEffect(logs.size) {
+        if (logs.isNotEmpty()) {
+            listState.animateScrollToItem(logs.size - 1)
+        }
+    }
+
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("📋 Consola", style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.primary)
+            TextButton(onClick = { viewModel.clearLogs() }) {
+                Icon(Icons.Filled.DeleteSweep, contentDescription = null,
+                    modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Limpiar")
+            }
+        }
+
+        Spacer(Modifier.height(4.dp))
+
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(32.dp),
-            shape = RoundedCornerShape(24.dp),
+            modifier = Modifier.fillMaxSize(),
             colors = CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant
+                containerColor = Color(0xFF0D0D1A)
             )
         ) {
-            Column(
-                modifier = Modifier.padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                // Icono grande
-                Box(
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.errorContainer),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        Icons.Filled.BluetoothDisabled,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.error,
-                        modifier = Modifier.size(40.dp)
-                    )
+            if (logs.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text("Consola vacía", color = Color(0xFF666666))
                 }
-
-                Spacer(Modifier.height(20.dp))
-
-                Text(
-                    "Error de Inicialización",
-                    style = MaterialTheme.typography.headlineSmall,
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.error
-                )
-
-                Spacer(Modifier.height(12.dp))
-
-                Text(
-                    error,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center
-                )
-
-                Spacer(Modifier.height(24.dp))
-
-                Button(
-                    onClick = onRetry,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MaterialTheme.colorScheme.primary
-                    )
+            } else {
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier.padding(8.dp)
                 ) {
-                    Icon(Icons.Filled.Refresh, contentDescription = null)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Reintentar Inicialización")
+                    items(logs) { log ->
+                        Text(
+                            log,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            color = Color(0xFF00FF41),
+                            lineHeight = 16.sp
+                        )
+                    }
                 }
-
-                Spacer(Modifier.height(8.dp))
-
-                OutlinedButton(
-                    onClick = onDismiss,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                ) {
-                    Text("Continuar de todos modos")
-                }
-
-                Spacer(Modifier.height(8.dp))
-
-                Text(
-                    "Si el problema persiste, revisa que el Bluetooth " +
-                            "esté activado y los permisos concedidos.",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
-                    textAlign = TextAlign.Center
-                )
             }
         }
     }
