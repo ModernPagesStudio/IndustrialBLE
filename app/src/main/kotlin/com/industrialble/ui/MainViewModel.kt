@@ -356,6 +356,23 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun addPasswordToWordlist(password: String) {
+        val trimmed = password.trim()
+        if (trimmed.length < 4) {
+            addLog("⚠️ La contraseña debe tener al menos 4 caracteres")
+            return
+        }
+        if (trimmed in _wordlist.value) {
+            addLog("⚠️ Esa contraseña ya está en la wordlist")
+            return
+        }
+        val current = _wordlist.value.toMutableList()
+        current.add(trimmed)
+        _wordlist.value = current
+        _wordlistSize.value = current.size
+        addLog("➕ Contraseña agregada: $trimmed")
+    }
+
     fun removePasswordFromWordlist(index: Int) {
         val current = _wordlist.value.toMutableList()
         if (index in current.indices) {

@@ -1,8 +1,53 @@
 package com.industrialble
 
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.industrialble.network.NetworkScanner
+import com.industrialble.network.PortScanner
+import com.industrialble.tools.WordlistGenerator
+import com.industrialble.ui.MainViewModel
+import com.industrialble.ui.theme.IndustrialBLETheme
+import com.industrialble.updater.ReleaseInfo
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -46,8 +91,17 @@ import com.industrialble.ui.theme.IndustrialBLETheme
 import com.industrialble.updater.ReleaseInfo
 
 class MainActivity : ComponentActivity() {
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) {}
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // Solicitar permisos necesarios al iniciar la app
+        requestAppPermissions()
+
         setContent {
             IndustrialBLETheme(darkTheme = true) {
                 Surface(
@@ -57,6 +111,43 @@ class MainActivity : ComponentActivity() {
                     MainApp()
                 }
             }
+        }
+    }
+
+    private fun requestAppPermissions() {
+        val permissions = mutableListOf<String>()
+
+        // Permisos de ubicación (necesarios para WiFi Scan)
+        permissions.add(Manifest.permission.ACCESS_FINE_LOCATION)
+        permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION)
+
+        // Android 13+ permisos de notificaciones
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            permissions.add(Manifest.permission.NEARBY_WIFI_DEVICES)
+            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+        }
+
+        // Android 12- permisos de bluetooth
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            permissions.add(Manifest.permission.BLUETOOTH_CONNECT)
+            permissions.add(Manifest.permission.BLUETOOTH_SCAN)
+        }
+
+        // Almacenamiento (Android 10-12)
+        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.Q) {
+            permissions.add(Manifest.permission.READ_EXTERNAL_STORAGE)
+        }
+
+        // Filtrar solo los que NO están concedidos
+        val needed = permissions.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+
+        if (needed.isNotEmpty()) {
+            permissionLauncher.launch(needed.toTypedArray())
         }
     }
 }
@@ -998,6 +1089,40 @@ fun WordlistTab(viewModel: MainViewModel) {
                     if (showPasswordList) {
                         Divider()
                         Spacer(Modifier.height(4.dp))
+
+                        // Input para agregar contraseña
+                        var addPw by remember { mutableStateOf("") }
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp)) {
+                            OutlinedTextField(
+                                value = addPw,
+                                onValueChange = { addPw = it },
+                                placeholder = { Text("+ password", fontSize = 12.sp) },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f).height(48.dp),
+                                textStyle = LocalTextStyle.current.copy(
+                                    fontSize = 12.sp, fontFamily = FontFamily.Monospace),
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                                keyboardActions = KeyboardActions(onDone = {
+                                    viewModel.addPasswordToWordlist(addPw)
+                                    addPw = ""
+                                })
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Button(
+                                onClick = {
+                                    viewModel.addPasswordToWordlist(addPw)
+                                    addPw = ""
+                                },
+                                modifier = Modifier.height(48.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 0.dp)
+                            ) {
+                                Icon(Icons.Filled.Add, null, Modifier.size(16.dp))
+                                Spacer(Modifier.width(2.dp))
+                                Text("Agregar", fontSize = 12.sp)
+                            }
+                        }
+
                         wordlist.take(100).forEachIndexed { index, pw ->
                             Row(Modifier.fillMaxWidth().padding(vertical = 1.dp),
                                 verticalAlignment = Alignment.CenterVertically) {
