@@ -148,7 +148,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _publicIp = MutableStateFlow("...")
     val publicIp: StateFlow<String> = _publicIp.asStateFlow()
 
-    /** Inicializa la app y verifica actualizaciones automáticamente */
+    /** Inicializa la app (sin auto-update, solo manual) */
     fun initApp() {
         viewModelScope.launch {
             _rootStatus.value = RootChecker.check(context)
@@ -166,42 +166,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 addLog("ℹ️ Sin root: ${_rootStatus.value.details}")
             }
-
-            // Auto-check de actualizaciones
-            autoCheckForUpdates()
-        }
-    }
-
-    /** Verifica actualizaciones automáticamente al iniciar */
-    private suspend fun autoCheckForUpdates() {
-        addLog("🔄 Verificando actualizaciones...")
-        val currentVersion = BuildConfig.VERSION_NAME
-        val info = withContext(Dispatchers.IO) {
-            githubReleaseChecker.checkForUpdate(currentVersion)
-        }
-        _updateInfo.value = info
-
-        if (info != null && info.downloadUrl.isNotBlank()) {
-            addLog("📦 Actualización encontrada: ${info.latestVersion}")
-            addLog("📥 Descargando automáticamente...")
-
-            // Auto-descargar con barra de progreso
-            _downloading.value = true
-            _downloadProgress.value = Pair(0L, 0L)
-            startProgressPolling()
-            autoUpdateManager.downloadAndInstall(
-                downloadUrl = info.downloadUrl,
-                onProgress = { downloaded, total ->
-                    _downloadProgress.value = Pair(downloaded, total)
-                },
-                onComplete = {
-                    _downloading.value = false
-                    progressPollingJob?.cancel()
-                    addLog("✅ Descarga completada. Instalando...")
-                }
-            )
-        } else {
-            addLog("✅ Versión actualizada")
         }
     }
 
@@ -441,10 +405,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val info = githubReleaseChecker.checkForUpdate(BuildConfig.VERSION_NAME)
             _updateInfo.value = info
             _checkingUpdate.value = false
-            if (info != null && info.downloadUrl.isNotBlank()) {
-                addLog("📦 Actualización disponible: ${info.latestVersion}")
+            if (info == null) {
+                addLog("⚠️ No se pudo conectar con GitHub")
+            } else if (info.isNewer) {
+                addLog("📦 Actualización disponible: v${info.latestVersion}")
             } else {
-                addLog("ℹ️ No se pudo verificar actualizaciones")
+                addLog("✅ Ya tienes la última versión (v${info.latestVersion})")
             }
         }
     }
@@ -455,15 +421,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             addLog("❌ No hay URL de descarga disponible")
             return
         }
+        // Verificar que realmente sea más nueva
+        if (!info.isNewer) {
+            addLog("ℹ️ Ya tienes la versión más reciente (${info.latestVersion})")
+            return
+        }
         _downloading.value = true
         _downloadProgress.value = Pair(0L, 0L)
+        addLog("📥 Descargando ${info.latestVersion}...")
+
+        // Iniciar polling de progreso
         startProgressPolling()
-        addLog("📥 Descargando actualización...")
+
         autoUpdateManager.downloadAndInstall(
             downloadUrl = info.downloadUrl,
-            onProgress = { downloaded, total ->
-                _downloadProgress.value = Pair(downloaded, total)
-            },
             onComplete = {
                 _downloading.value = false
                 progressPollingJob?.cancel()
@@ -483,12 +454,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun startProgressPolling() {
         progressPollingJob?.cancel()
         progressPollingJob = viewModelScope.launch {
-            while (true) {
-                delay(300)
+            while (isActive) {
                 val progress = autoUpdateManager.getDownloadProgress()
                 if (progress.second > 0) {
                     _downloadProgress.value = progress
+                } else if (progress.first == 0L && progress.second == 0L && !_downloading.value) {
+                    // Descarga terminó o fue cancelada
+                    break
                 }
+                delay(500)
             }
         }
     }

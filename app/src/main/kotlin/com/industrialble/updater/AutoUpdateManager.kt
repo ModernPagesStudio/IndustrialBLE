@@ -55,12 +55,10 @@ class AutoUpdateManager(
     /**
      * Inicia la descarga de la APK usando DownloadManager.
      * @param downloadUrl URL directa del archivo APK
-     * @param onProgress callback con (bytesDescargados, bytesTotales)
      * @param onComplete callback cuando la descarga finalice
      */
     fun downloadAndInstall(
         downloadUrl: String,
-        onProgress: ((Long, Long) -> Unit)? = null,
         onComplete: (() -> Unit)? = null
     ) {
         onDownloadComplete = onComplete
@@ -111,39 +109,9 @@ class AutoUpdateManager(
 
         val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         downloadId = manager.enqueue(request)
-
-        // Empezar a reportar progreso
-        reportProgress(manager, onProgress)
     }
 
-    /** Consulta el progreso de la descarga periódicamente */
-    private fun reportProgress(manager: DownloadManager, onProgress: ((Long, Long) -> Unit)?) {
-        if (onProgress == null) return
-        Thread {
-            while (downloadId >= 0) {
-                try {
-                    val query = DownloadManager.Query().setFilterById(downloadId)
-                    val cursor = manager.query(query)
-                    if (cursor.moveToFirst()) {
-                        val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                        if (status == DownloadManager.STATUS_SUCCESSFUL || status == DownloadManager.STATUS_FAILED) {
-                            cursor.close()
-                            break
-                        }
-                        val downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
-                        val total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
-                        cursor.close()
-                        if (total > 0) {
-                            onProgress(downloaded, total)
-                        }
-                    }
-                } catch (_: Exception) { }
-                try { Thread.sleep(500) } catch (_: InterruptedException) { break }
-            }
-        }.apply { isDaemon = true }.start()
-    }
-
-    /** Obtiene el progreso actual de la descarga */
+    /** Obtiene el progreso actual de la descarga desde el DownloadManager */
     fun getDownloadProgress(): Pair<Long, Long> {
         if (downloadId < 0) return Pair(0, 0)
         return try {
@@ -151,6 +119,12 @@ class AutoUpdateManager(
             val query = DownloadManager.Query().setFilterById(downloadId)
             val cursor = manager.query(query)
             if (cursor.moveToFirst()) {
+                val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                // Si ya terminó o falló, reportar 0,0 para que el UI sepa que terminó
+                if (status == DownloadManager.STATUS_SUCCESSFUL || status == DownloadManager.STATUS_FAILED) {
+                    cursor.close()
+                    return Pair(0, 0)
+                }
                 val downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
                 val total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
                 cursor.close()
