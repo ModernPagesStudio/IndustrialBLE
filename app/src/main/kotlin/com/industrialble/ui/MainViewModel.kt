@@ -82,6 +82,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _bruteForceFound = MutableStateFlow("")
     val bruteForceFound: StateFlow<String> = _bruteForceFound.asStateFlow()
 
+    private val _bruteForceResult = MutableStateFlow("")
+    val bruteForceResult: StateFlow<String> = _bruteForceResult.asStateFlow()
+
     private val _bruteForceDelay = MutableStateFlow(1500) // ms entre intentos
     val bruteForceDelay: StateFlow<Int> = _bruteForceDelay.asStateFlow()
 
@@ -261,11 +264,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             },
             onFound = { password ->
                 _bruteForceFound.value = password
+                _bruteForceResult.value = "🎉 CONTRASEÑA ENCONTRADA: $password"
                 addLog("🎉 CONTRASEÑA ENCONTRADA: $password")
             },
             onFinish = { success ->
                 _bruteForceRunning.value = false
-                if (!success) addLog("❌ Fuerza bruta completada sin éxito")
+                if (success) {
+                    _bruteForceResult.value = "✅ Contraseña encontrada!"
+                } else {
+                    _bruteForceResult.value = "❌ No se encontró. Probados: ${passwords.size} passwords"
+                    addLog("❌ Fuerza bruta completada sin éxito")
+                }
             }
         )
     }
@@ -273,7 +282,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun stopBruteForce() {
         wifiHack.cancelBruteForce()
         _bruteForceRunning.value = false
+        _bruteForceResult.value = "⏹️ Fuerza bruta cancelada"
         addLog("⏹️ Fuerza bruta cancelada")
+    }
+
+    fun clearBruteForceResult() {
+        _bruteForceFound.value = ""
+        _bruteForceResult.value = ""
     }
 
     fun setBruteForceDelay(delay: Int) {

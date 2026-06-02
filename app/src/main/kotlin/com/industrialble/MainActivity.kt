@@ -521,6 +521,7 @@ fun WiFiTab(viewModel: MainViewModel) {
     val bruteForceProgress by viewModel.bruteForceProgress.collectAsState()
     val bruteForceRunning by viewModel.bruteForceRunning.collectAsState()
     val bruteForceFound by viewModel.bruteForceFound.collectAsState()
+    val bruteForceResult by viewModel.bruteForceResult.collectAsState()
     val wordlist by viewModel.wordlist.collectAsState()
     val savedNetworks by viewModel.savedNetworks.collectAsState()
 
@@ -606,6 +607,7 @@ fun WiFiTab(viewModel: MainViewModel) {
                     bruteForceProgress = bruteForceProgress,
                     bruteForceRunning = bruteForceRunning,
                     bruteForceFound = bruteForceFound,
+                    bruteForceResult = bruteForceResult,
                     onClose = {
                         showBruteForce = false
                         selectedSsid = ""
@@ -707,6 +709,7 @@ fun BruteForceSection(
     bruteForceProgress: Triple<Int, Int, String>,
     bruteForceRunning: Boolean,
     bruteForceFound: String,
+    bruteForceResult: String = "",
     onClose: () -> Unit
 ) {
     val bruteForceDelay by viewModel.bruteForceDelay.collectAsState()
@@ -853,6 +856,28 @@ fun BruteForceSection(
                         Text(bruteForceFound, fontFamily = FontFamily.Monospace,
                             fontSize = 20.sp, fontWeight = FontWeight.Bold,
                             color = Color.White)
+                    }
+                }
+            }
+
+            // ===== RESULTADO (cuando termina sin éxito o se cancela) =====
+            if (!bruteForceRunning && bruteForceResult.isNotEmpty() && bruteForceFound.isEmpty()) {
+                Spacer(Modifier.height(8.dp))
+                val bgColor = if (bruteForceResult.contains("❌") || bruteForceResult.contains("⏹️"))
+                    Color(0xFF3E2723) else Color(0xFF1B5E20)
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = bgColor),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxWidth()) {
+                        Text(bruteForceResult, fontSize = 14.sp,
+                            color = if (bruteForceResult.contains("encontrada")) Color(0xFF69F0AE)
+                                    else Color(0xFFFFA726))
+                        Spacer(Modifier.height(4.dp))
+                        TextButton(onClick = { viewModel.clearBruteForceResult() }) {
+                            Text("Descartar", fontSize = 12.sp)
+                        }
                     }
                 }
             }
