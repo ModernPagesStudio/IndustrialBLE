@@ -713,12 +713,11 @@ fun BruteForceSection(
                 Text("Probando: ${bruteForceProgress.third}", fontSize = 11.sp,
                     fontFamily = FontFamily.Monospace,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
+                val progress = if (bruteForceProgress.second > 0)
+                    bruteForceProgress.first.toFloat() / bruteForceProgress.second.toFloat()
+                else 0f
                 LinearProgressIndicator(
-                    progress = {
-                        if (bruteForceProgress.second > 0)
-                            bruteForceProgress.first.toFloat() / bruteForceProgress.second.toFloat()
-                        else 0f
-                    },
+                    progress = progress,
                     modifier = Modifier.fillMaxWidth().height(4.dp)
                 )
             }
