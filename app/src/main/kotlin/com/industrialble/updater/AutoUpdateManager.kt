@@ -53,6 +53,15 @@ class AutoUpdateManager(
     }
 
     /**
+     * Resultado del progreso de descarga con estado incluido.
+     */
+    data class DownloadProgress(
+        val downloadedBytes: Long = 0,
+        val totalBytes: Long = 0,
+        val status: Int = DownloadManager.STATUS_PENDING
+    )
+
+    /**
      * Inicia la descarga de la APK usando DownloadManager.
      * @param downloadUrl URL directa del archivo APK
      * @param onComplete callback cuando la descarga finalice
@@ -106,34 +115,97 @@ class AutoUpdateManager(
             )
             .setAllowedOverMetered(true)
             .setAllowedOverRoaming(true)
+            .setRequiresCharging(false)
+            .setRequiresDeviceIdle(false)
 
         val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         downloadId = manager.enqueue(request)
     }
 
-    /** Obtiene el progreso actual de la descarga desde el DownloadManager */
-    fun getDownloadProgress(): Pair<Long, Long> {
-        if (downloadId < 0) return Pair(0, 0)
+    /**
+     * Obtiene el progreso actual de la descarga con estado incluido.
+     * Reporta correctamente cuando la descarga terminó o falló.
+     */
+    fun getDownloadProgress(): DownloadProgress {
+        if (downloadId < 0) return DownloadProgress(status = DownloadManager.STATUS_FAILED)
         return try {
             val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             val query = DownloadManager.Query().setFilterById(downloadId)
             val cursor = manager.query(query)
             if (cursor.moveToFirst()) {
                 val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
-                // Si ya terminó o falló, reportar 0,0 para que el UI sepa que terminó
-                if (status == DownloadManager.STATUS_SUCCESSFUL || status == DownloadManager.STATUS_FAILED) {
-                    cursor.close()
-                    return Pair(0, 0)
-                }
                 val downloaded = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR))
                 val total = cursor.getLong(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_TOTAL_SIZE_BYTES))
                 cursor.close()
-                Pair(downloaded, total)
+                DownloadProgress(
+                    downloadedBytes = downloaded,
+                    totalBytes = total,
+                    status = status
+                )
             } else {
                 cursor.close()
-                Pair(0, 0)
+                DownloadProgress(status = DownloadManager.STATUS_FAILED)
             }
-        } catch (_: Exception) { Pair(0, 0) }
+        } catch (_: Exception) {
+            DownloadProgress(status = DownloadManager.STATUS_FAILED)
+        }
+    }
+
+    /**
+     * Verifica si la descarga finalizó (exitosa o fallida).
+     */
+    fun isDownloadFinished(): Boolean {
+        val progress = getDownloadProgress()
+        return progress.status == DownloadManager.STATUS_SUCCESSFUL ||
+               progress.status == DownloadManager.STATUS_FAILED
+    }
+
+    /**
+     * Obtiene el motivo del fallo si la descarga falló.
+     */
+    fun getDownloadError(): String {
+        if (downloadId < 0) return "No hay descarga activa"
+        return try {
+            val manager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val query = DownloadManager.Query().setFilterById(downloadId)
+            val cursor = manager.query(query)
+            if (cursor.moveToFirst()) {
+                val status = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                val reason = cursor.getInt(cursor.getColumnIndexOrThrow(DownloadManager.COLUMN_REASON))
+                cursor.close()
+                when (status) {
+                    DownloadManager.STATUS_FAILED -> {
+                        when (reason) {
+                            DownloadManager.ERROR_CANNOT_RESUME -> "No se puede reanudar"
+                            DownloadManager.ERROR_DEVICE_NOT_FOUND -> "Dispositivo no encontrado"
+                            DownloadManager.ERROR_FILE_ALREADY_EXISTS -> "El archivo ya existe"
+                            DownloadManager.ERROR_FILE_ERROR -> "Error de archivo"
+                            DownloadManager.ERROR_HTTP_DATA_ERROR -> "Error HTTP al descargar"
+                            DownloadManager.ERROR_INSUFFICIENT_SPACE -> "Espacio insuficiente"
+                            DownloadManager.ERROR_TOO_MANY_REDIRECTS -> "Demasiadas redirecciones"
+                            DownloadManager.ERROR_UNHANDLED_HTTP_CODE -> "Código HTTP no manejado"
+                            DownloadManager.ERROR_UNKNOWN -> "Error desconocido"
+                            else -> "Código de error: $reason"
+                        }
+                    }
+                    DownloadManager.STATUS_PAUSED -> {
+                        when (reason) {
+                            DownloadManager.PAUSED_QUEUED_FOR_WIFI -> "Esperando WiFi"
+                            DownloadManager.PAUSED_WAITING_FOR_NETWORK -> "Esperando red"
+                            DownloadManager.PAUSED_WAITING_TO_RETRY -> "Reintentando..."
+                            DownloadManager.PAUSED_UNKNOWN -> "Pausada (razón desconocida)"
+                            else -> "Pausada"
+                        }
+                    }
+                    else -> "Estado: $status"
+                }
+            } else {
+                cursor.close()
+                "Descarga no encontrada"
+            }
+        } catch (e: Exception) {
+            "Error al consultar: ${e.message}"
+        }
     }
 
     /**

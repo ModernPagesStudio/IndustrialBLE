@@ -146,6 +146,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val _downloadProgress = MutableStateFlow(Pair(0L, 0L))
     val downloadProgress: StateFlow<Pair<Long, Long>> = _downloadProgress.asStateFlow()
 
+    private val _downloadError = MutableStateFlow("")
+    val downloadError: StateFlow<String> = _downloadError.asStateFlow()
+
     private var progressPollingJob: kotlinx.coroutines.Job? = null
 
     // ===== SYSTEM INFO =====
@@ -455,7 +458,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             onComplete = {
                 _downloading.value = false
                 progressPollingJob?.cancel()
-                addLog("✅ Descarga completada. Instalando...")
+                val progress = autoUpdateManager.getDownloadProgress()
+                if (progress.status == android.app.DownloadManager.STATUS_SUCCESSFUL) {
+                    _downloadError.value = ""
+                    addLog("✅ Descarga completada. Instalando...")
+                } else if (progress.status == android.app.DownloadManager.STATUS_FAILED) {
+                    val error = autoUpdateManager.getDownloadError()
+                    _downloadError.value = error
+                    addLog("❌ Descarga fallida: $error")
+                } else {
+                    addLog("📦 Descarga finalizada. Instalando...")
+                }
             }
         )
     }
@@ -464,6 +477,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         autoUpdateManager.cleanup()
         _downloading.value = false
         _downloadProgress.value = Pair(0L, 0L)
+        _downloadError.value = ""
         progressPollingJob?.cancel()
         addLog("⏹️ Descarga cancelada")
     }
@@ -471,14 +485,49 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private fun startProgressPolling() {
         progressPollingJob?.cancel()
         progressPollingJob = viewModelScope.launch {
+            var stalledCount = 0
             while (isActive) {
                 val progress = autoUpdateManager.getDownloadProgress()
-                if (progress.second > 0) {
-                    _downloadProgress.value = progress
-                } else if (progress.first == 0L && progress.second == 0L && !_downloading.value) {
-                    // Descarga terminó o fue cancelada
-                    break
+                val (downloaded, total) = progress.downloadedBytes to progress.totalBytes
+
+                when (progress.status) {
+                    android.app.DownloadManager.STATUS_SUCCESSFUL,
+                    android.app.DownloadManager.STATUS_FAILED -> {
+                        // Descarga finalizó - el onComplete callback se encargará
+                        _downloadProgress.value = Pair(downloaded, total)
+                        if (progress.status == android.app.DownloadManager.STATUS_FAILED) {
+                            val error = autoUpdateManager.getDownloadError()
+                            _downloadError.value = error
+                            addLog("❌ Error en descarga: $error")
+                        }
+                        break
+                    }
+                    android.app.DownloadManager.STATUS_PAUSED -> {
+                        val reason = autoUpdateManager.getDownloadError()
+                        addLog("⏸️ Descarga pausada: $reason")
+                    }
+                    android.app.DownloadManager.STATUS_PENDING -> {
+                        // Aún en cola, esperar
+                    }
                 }
+
+                if (total > 0) {
+                    _downloadProgress.value = Pair(downloaded, total)
+                    stalledCount = 0
+                } else if (downloaded > 0) {
+                    // Total desconocido pero hay progreso - mostrar lo descargado
+                    _downloadProgress.value = Pair(downloaded, downloaded)
+                    stalledCount = 0
+                } else {
+                    stalledCount++
+                    if (stalledCount > 40) { // 20 segundos sin progreso
+                        val error = autoUpdateManager.getDownloadError()
+                        if (!error.contains("Pausada")) {
+                            addLog("⚠️ Descarga sin progreso durante 20s. Estado: $error")
+                        }
+                    }
+                }
+
                 delay(500)
             }
         }

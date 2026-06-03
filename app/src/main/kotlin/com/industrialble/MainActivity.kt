@@ -1329,6 +1329,7 @@ fun AjustesTab(viewModel: MainViewModel) {
     val downloading by viewModel.downloading.collectAsState()
     val publicIp by viewModel.publicIp.collectAsState()
     val downloadProgress by viewModel.downloadProgress.collectAsState()
+    val downloadError by viewModel.downloadError.collectAsState()
 
     LaunchedEffect(logs.size) {
         if (logs.isNotEmpty()) listState.animateScrollToItem(logs.size - 1)
@@ -1355,7 +1356,7 @@ fun AjustesTab(viewModel: MainViewModel) {
                 if (downloading) {
                     val (downloaded, total) = downloadProgress
                     val progress = if (total > 0) downloaded.toFloat() / total.toFloat() else 0f
-                    val progressPct = (progress * 100).toInt()
+                    val progressPct = ((progress * 100).toInt()).coerceIn(0, 100)
                     val downloadedMb = downloaded / (1024 * 1024)
                     val totalMb = total / (1024 * 1024)
 
@@ -1368,8 +1369,20 @@ fun AjustesTab(viewModel: MainViewModel) {
                         modifier = Modifier.fillMaxWidth().height(8.dp)
                     )
                     Spacer(Modifier.height(2.dp))
-                    Text("${downloadedMb}MB / ${totalMb}MB",
-                        fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    if (total > 0) {
+                        Text("${downloadedMb}MB / ${totalMb}MB",
+                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    } else {
+                        Text("${downloadedMb}MB descargados...",
+                            fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+
+                    if (downloadError.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        Text("⚠️ $downloadError", fontSize = 11.sp,
+                            color = Color(0xFFFFA726))
+                    }
+
                     Spacer(Modifier.height(6.dp))
 
                     Button(
